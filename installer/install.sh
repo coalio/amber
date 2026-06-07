@@ -41,12 +41,12 @@ json_field() {
 
 asset_url_for() {
   local asset="$1"
-  sed -n 's/.*"browser_download_url": *"\([^"]*\)".*/\1/p' | grep "/$asset$" | head -n 1
+  sed -n 's/.*"browser_download_url": *"\([^"]*\)".*/\1/p' | grep "/$asset$" | head -n 1 || true
 }
 
 asset_part_urls_for() {
   local asset="$1"
-  sed -n 's/.*"browser_download_url": *"\([^"]*\)".*/\1/p' | grep "/$asset.part-" | sort
+  sed -n 's/.*"browser_download_url": *"\([^"]*\)".*/\1/p' | grep "/$asset.part-" | sort || true
 }
 
 install_release() {

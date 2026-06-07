@@ -45,7 +45,10 @@ cp "$ROOT/src/config/MEMORY.md" "$STAGING/resources/prompts/"
 cp "$ROOT/src/config/skills/CodexRules/SKILL.md" "$STAGING/resources/codex-skills/CodexRules/SKILL.md"
 
 tar -C "$STAGING" -czf "$DIST_DIR/$ASSET_NAME" .
-sha256sum "$DIST_DIR/$ASSET_NAME" > "$DIST_DIR/$ASSET_NAME.sha256"
+(
+  cd "$DIST_DIR"
+  sha256sum "$ASSET_NAME" > "$ASSET_NAME.sha256"
+)
 if [[ "$(stat -c%s "$DIST_DIR/$ASSET_NAME")" -gt 2000000000 ]]; then
   split -b "$SPLIT_SIZE" "$DIST_DIR/$ASSET_NAME" "$DIST_DIR/$ASSET_NAME.part-"
   echo "$DIST_DIR/$ASSET_NAME split into:"

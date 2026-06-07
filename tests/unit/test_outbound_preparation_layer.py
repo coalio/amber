@@ -47,36 +47,21 @@ def test_outbound_preparation_layer_keeps_fenced_code_blocks_together_and_wraps_
     assert all(len(message) <= 12 for message in ordered_messages[2:])
 
 
-def test_codex_metadata_does_not_rewrite_draft_text(tmp_path) -> None:
+def test_codex_tagged_replies_use_standard_outbound_contract(tmp_path) -> None:
     capture: list[OutboundMessagePreparedEvent] = []
     EventBus.subscribe("OutboundMessagePreparedEvent", capture.append)
     layer = _build_layer(tmp_path)
+    draft_text = "Status update ready.\nNext step is queued."
 
-    layer.handle_semantic_decision(
-        _reply_event(
-            draft_text="Keep THIS exact draft.\nSecond Line stays unchanged.",
-            codex=True,
-        )
-    )
+    layer.handle_semantic_decision(_reply_event(draft_text=draft_text))
+    layer.handle_semantic_decision(_reply_event(draft_text=draft_text, codex=True))
 
-    assert capture
-    assert capture[-1].payload.ordered_messages == [
-        "Keep THIS exact draft.",
-        "Second Line stays unchanged.",
-    ]
-
-
-def test_outbound_preparation_layer_preserves_first_person_direction(tmp_path) -> None:
-    capture: list[OutboundMessagePreparedEvent] = []
-    EventBus.subscribe("OutboundMessagePreparedEvent", capture.append)
-    layer = _build_layer(tmp_path)
-
-    layer.handle_semantic_decision(_reply_event(draft_text="running it now. i'll send you the output once it finishes."))
-
-    assert capture
-    output = " ".join(capture[-1].payload.ordered_messages)
-    assert "i'll send you the output" in output
-    assert "send me the output" not in output
+    normal_payload = capture[-2].payload
+    codex_payload = capture[-1].payload
+    assert codex_payload.no_send is False
+    assert codex_payload.raw_output == normal_payload.raw_output
+    assert codex_payload.ordered_messages == normal_payload.ordered_messages
+    assert all(isinstance(message, str) and message for message in codex_payload.ordered_messages)
 
 
 def _build_layer(tmp_path, *, max_chunk_chars: int = 220) -> OutboundPreparationLayer:

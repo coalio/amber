@@ -20,13 +20,13 @@ def reset_event_bus() -> None:
 
 
 def test_harness_allows_short_reply_that_does_not_share_trigger_tokens() -> None:
-    harness = ConsciousHarness(AIConfig(semantic_retry_budget=1, max_draft_chars=320))
+    harness = ConsciousHarness(AIConfig(semantic_retry_budget=1, max_reply_chars=320))
     frame = _build_frame("hey amber whats up")
     decision = SemanticDecisionSchema(
         action="reply",
         reply_to_message_id=None,
         chat_id=1001001001,
-        draft_text="not much, you?",
+        reply_text="not much, you?",
         referenced_memory_ids=[],
         confidence=0.82,
         notes=[],
@@ -37,14 +37,14 @@ def test_harness_allows_short_reply_that_does_not_share_trigger_tokens() -> None
     assert harness.evaluate(frame, decision) is None
 
 
-def test_harness_still_rejects_near_duplicate_draft() -> None:
-    harness = ConsciousHarness(AIConfig(semantic_retry_budget=1, max_draft_chars=320))
+def test_harness_still_rejects_near_duplicate_reply() -> None:
+    harness = ConsciousHarness(AIConfig(semantic_retry_budget=1, max_reply_chars=320))
     frame = _build_frame("hey amber whats up")
     decision = SemanticDecisionSchema(
         action="reply",
         reply_to_message_id=None,
         chat_id=1001001001,
-        draft_text="hey amber whats up?",
+        reply_text="hey amber whats up?",
         referenced_memory_ids=[],
         confidence=0.82,
         notes=[],
@@ -55,7 +55,7 @@ def test_harness_still_rejects_near_duplicate_draft() -> None:
     failure = harness.evaluate(frame, decision)
 
     assert failure is not None
-    assert failure.code == "draft_mirrors_trigger_message"
+    assert failure.code == "reply_mirrors_trigger_message"
     assert "triggering message 1083" in failure.reason
     assert failure.context["offending_messages"][0]["message_id"] == 1083
     assert failure.context["recent_window"][0]["content_preview"] == "hey amber whats up"
@@ -69,7 +69,7 @@ def test_ai_layer_retries_with_descriptive_harness_feedback_and_previous_decisio
                 action="reply",
                 reply_to_message_id=None,
                 chat_id=1001001001,
-                draft_text="hey amber whats up?",
+                reply_text="hey amber whats up?",
                 referenced_memory_ids=[],
                 confidence=0.82,
                 notes=[],
@@ -80,7 +80,7 @@ def test_ai_layer_retries_with_descriptive_harness_feedback_and_previous_decisio
                 action="reply",
                 reply_to_message_id=None,
                 chat_id=1001001001,
-                draft_text="not much, you?",
+                reply_text="not much, you?",
                 referenced_memory_ids=[],
                 confidence=0.87,
                 notes=[],
@@ -89,19 +89,19 @@ def test_ai_layer_retries_with_descriptive_harness_feedback_and_previous_decisio
             ),
         ]
     )
-    layer = AILayer(AIConfig(semantic_retry_budget=3, max_draft_chars=320), client)
+    layer = AILayer(AIConfig(semantic_retry_budget=3, max_reply_chars=320), client)
 
     result = layer._call_with_harness(frame)
 
     assert result.action == "reply"
-    assert result.draft_text == "not much, you?"
+    assert result.reply_text == "not much, you?"
     assert result.reply_to_message_id == 1083
     assert len(client.calls) == 2
     retry_call = client.calls[1]
     assert retry_call["previous_decision"] is not None
-    assert retry_call["previous_decision"].draft_text == "hey amber whats up?"
+    assert retry_call["previous_decision"].reply_text == "hey amber whats up?"
     assert retry_call["harness_feedback"] is not None
-    assert retry_call["harness_feedback"]["code"] == "draft_mirrors_trigger_message"
+    assert retry_call["harness_feedback"]["code"] == "reply_mirrors_trigger_message"
     assert retry_call["harness_feedback"]["retry_attempt"] == 1
     assert retry_call["harness_feedback"]["retries_remaining"] == 2
     assert retry_call["harness_feedback"]["offending_messages"][0]["message_id"] == 1083
@@ -110,7 +110,7 @@ def test_ai_layer_retries_with_descriptive_harness_feedback_and_previous_decisio
 
 def test_ai_layer_logs_critical_when_semantic_decision_validation_throws(caplog: pytest.LogCaptureFixture) -> None:
     frame = _build_frame("hey amber whats up")
-    layer = AILayer(AIConfig(semantic_retry_budget=1, max_draft_chars=320), InvalidSemanticClient())
+    layer = AILayer(AIConfig(semantic_retry_budget=1, max_reply_chars=320), InvalidSemanticClient())
     caplog.set_level(logging.CRITICAL)
 
     result = layer._call_with_harness(frame)
@@ -148,7 +148,7 @@ def test_ai_layer_uses_interruption_decision_flow_for_pending_interruption() -> 
                 interrupt_decision="accept",
                 action="reply",
                 reply_to_message_id=1083,
-                draft_text="yeah exactly, and the short version is sfinae filters bad overloads during substitution.",
+                reply_text="yeah exactly, and the short version is sfinae filters bad overloads during substitution.",
                 referenced_memory_ids=[],
                 confidence=0.91,
                 reason="Interrupting message matches the remaining idea and should steer the continuation.",
@@ -156,13 +156,13 @@ def test_ai_layer_uses_interruption_decision_flow_for_pending_interruption() -> 
             )
         ],
     )
-    layer = AILayer(AIConfig(semantic_retry_budget=1, max_draft_chars=320), client)
+    layer = AILayer(AIConfig(semantic_retry_budget=1, max_reply_chars=320), client)
 
     result = layer._call_with_harness(frame)
 
     assert result.action == "reply"
     assert result.reply_to_message_id == 1083
-    assert result.draft_text == "yeah exactly, and the short version is sfinae filters bad overloads during substitution."
+    assert result.reply_text == "yeah exactly, and the short version is sfinae filters bad overloads during substitution."
     assert result.notes[0] == "interrupt_accept"
     assert len(client.interruption_calls) == 1
     assert client.interruption_calls[0]["interruption"].interrupting_message_id == 1083
@@ -188,7 +188,7 @@ def test_ai_layer_retries_when_accepted_interruption_reuses_old_unsent_plan() ->
                 interrupt_decision="accept",
                 action="reply",
                 reply_to_message_id=1083,
-                draft_text="do you have any cats",
+                reply_text="do you have any cats",
                 referenced_memory_ids=[],
                 confidence=0.88,
                 reason="Accepted the interruption.",
@@ -198,7 +198,7 @@ def test_ai_layer_retries_when_accepted_interruption_reuses_old_unsent_plan() ->
                 interrupt_decision="accept",
                 action="reply",
                 reply_to_message_id=1083,
-                draft_text="yeah exactly, i was about to ask that, how old is yours?",
+                reply_text="yeah exactly, i was about to ask that, how old is yours?",
                 referenced_memory_ids=[],
                 confidence=0.91,
                 reason="Accepted and rewrote the follow-up naturally.",
@@ -206,17 +206,17 @@ def test_ai_layer_retries_when_accepted_interruption_reuses_old_unsent_plan() ->
             ),
         ],
     )
-    layer = AILayer(AIConfig(semantic_retry_budget=2, max_draft_chars=320), client)
+    layer = AILayer(AIConfig(semantic_retry_budget=2, max_reply_chars=320), client)
 
     result = layer._call_with_harness(frame)
 
-    assert result.draft_text == "yeah exactly, i was about to ask that, how old is yours?"
+    assert result.reply_text == "yeah exactly, i was about to ask that, how old is yours?"
     assert len(client.interruption_calls) == 2
     retry_call = client.interruption_calls[1]
     assert retry_call["harness_feedback"] is not None
     assert retry_call["harness_feedback"]["code"] == "accepted_interruption_reuses_unsent_plan"
     assert retry_call["previous_decision"] is not None
-    assert retry_call["previous_decision"].draft_text == "do you have any cats"
+    assert retry_call["previous_decision"].reply_text == "do you have any cats"
 
 
 def _build_frame(

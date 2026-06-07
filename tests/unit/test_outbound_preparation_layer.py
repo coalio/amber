@@ -22,7 +22,7 @@ def test_outbound_preparation_layer_emits_one_message_per_non_empty_line(tmp_pat
     EventBus.subscribe("OutboundMessagePreparedEvent", capture.append)
     layer = _build_layer(tmp_path)
 
-    layer.handle_semantic_decision(_reply_event(draft_text="first thought\nsecond thought\n\nthird thought"))
+    layer.handle_semantic_decision(_reply_event(reply_text="first thought\nsecond thought\n\nthird thought"))
 
     # The outbound boundary preserves paragraph intent while dropping empty spacer lines.
     assert capture
@@ -38,7 +38,7 @@ def test_outbound_preparation_layer_keeps_fenced_code_blocks_together_and_wraps_
     )
 
     layer.handle_semantic_decision(
-        _reply_event(draft_text="before\n```python\nprint('hi')\nprint('bye')\n```\nafter this line should wrap")
+        _reply_event(reply_text="before\n```python\nprint('hi')\nprint('bye')\n```\nafter this line should wrap")
     )
 
     assert capture
@@ -53,16 +53,16 @@ def test_codex_tagged_replies_use_standard_outbound_contract(tmp_path) -> None:
     capture: list[OutboundMessagePreparedEvent] = []
     EventBus.subscribe("OutboundMessagePreparedEvent", capture.append)
     layer = _build_layer(tmp_path)
-    draft_text = "Status update ready.\nNext step is queued."
+    reply_text = "Status update ready.\nNext step is queued."
 
-    layer.handle_semantic_decision(_reply_event(draft_text=draft_text))
-    layer.handle_semantic_decision(_reply_event(draft_text=draft_text, codex=True))
+    layer.handle_semantic_decision(_reply_event(reply_text=reply_text))
+    layer.handle_semantic_decision(_reply_event(reply_text=reply_text, codex=True))
 
     normal_payload = capture[-2].payload
     codex_payload = capture[-1].payload
     # Codex metadata is routing context, not authorship or a special rewrite path.
     assert codex_payload.no_send is False
-    assert codex_payload.raw_output == normal_payload.raw_output
+    assert codex_payload.raw_reply_text == normal_payload.raw_reply_text
     assert codex_payload.ordered_messages == normal_payload.ordered_messages
     assert all(isinstance(message, str) and message for message in codex_payload.ordered_messages)
 
@@ -75,13 +75,13 @@ def _build_layer(tmp_path, *, max_chunk_chars: int = 220) -> OutboundPreparation
     )
 
 
-def _reply_event(*, draft_text: str = "draft", codex: bool = False) -> SemanticDecisionMadeEvent:
+def _reply_event(*, reply_text: str = "reply", codex: bool = False) -> SemanticDecisionMadeEvent:
     return SemanticDecisionMadeEvent(
         chat_id=1001001001,
         payload=SemanticDecisionPayload(
             action="reply",
             chat_id=1001001001,
-            draft_text=draft_text,
+            reply_text=reply_text,
             reply_to_message_id=411,
             confidence=0.82,
             trigger_message_id=412,

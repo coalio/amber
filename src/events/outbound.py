@@ -16,7 +16,7 @@ class OutboundMessagePreparedPayload(BaseModel):
     ordered_messages: list[str] = Field(default_factory=list)
     reply_to_message_id: int | None = None
     mood: str
-    raw_output: str = ""
+    raw_reply_text: str = ""
     no_send: bool = False
     frame_created_at: datetime | None = None
     visible_read_not_before: datetime | None = None

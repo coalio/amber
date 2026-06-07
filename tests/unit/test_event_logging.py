@@ -69,13 +69,13 @@ def test_attention_dispatch_logs_decision_summary_without_emit_wrapper_noise(cap
 
 def test_semantic_dispatch_logs_action_summary(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.INFO)
-    draft_text = "I found the issue. The handler never logs the attention decision payload."
+    reply_text = "I found the issue. The handler never logs the attention decision payload."
     event = SemanticDecisionMadeEvent(
         chat_id=1001001001,
         payload=SemanticDecisionPayload(
             action="reply",
             chat_id=1001001001,
-            draft_text=draft_text,
+            reply_text=reply_text,
             reply_to_message_id=411,
             referenced_memory_ids=["mem_patch_review", "mem_logging"],
             confidence=0.8239,
@@ -99,8 +99,8 @@ def test_semantic_dispatch_logs_action_summary(caplog: pytest.LogCaptureFixture)
     assert payload["session_id"] == "sess_attention"
     assert payload["referenced_memory_count"] == 2
     assert payload["notes"] == ["harness_passed"]
-    assert payload["draft_length"] == len(draft_text)
-    assert payload["draft_preview"] == draft_text
+    assert payload["reply_length"] == len(reply_text)
+    assert payload["reply_preview"] == reply_text
 
 
 def test_configure_logging_creates_timestamped_run_file(

@@ -56,7 +56,7 @@ memories/
 test_outputs/
 .logs/
 logs/
-telegram/
+/telegram/
 config.toml
 
 # Local exports and training data

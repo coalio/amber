@@ -28,68 +28,74 @@ class ConsciousHarness:
     def evaluate(self, frame: ContextFramePayload, decision: SemanticDecisionSchema) -> HarnessFailure | None:
         if decision.action != "reply":
             return None
-        draft = (decision.draft_text or "").strip()
-        if not draft:
+        reply_text = (decision.reply_text or "").strip()
+
+        # A reply decision must already contain the complete text Amber will send.
+        if not reply_text:
             return HarnessFailure(
-                code="reply_requires_non_empty_draft",
-                reason="Reply draft is empty. If action is `reply`, `draft_text` must be non-empty.",
+                code="reply_requires_non_empty_text",
+                reason="Reply text is empty. If action is `reply`, `reply_text` must be non-empty.",
                 context={
-                    "draft_preview": None,
-                    "draft_length": 0,
+                    "reply_preview": None,
+                    "reply_length": 0,
                     "recent_window": self._window_context(frame),
                 },
             )
-        if len(draft) > self._config.max_draft_chars:
+        if len(reply_text) > self._config.max_reply_chars:
             return HarnessFailure(
-                code="draft_too_long_for_context",
+                code="reply_too_long_for_context",
                 reason=(
-                    f"Reply draft is too long for this context: {len(draft)} chars exceeds "
-                    f"the max of {self._config.max_draft_chars}."
+                    f"Reply text is too long for this context: {len(reply_text)} chars exceeds "
+                    f"the max of {self._config.max_reply_chars}."
                 ),
                 context={
-                    "draft_preview": self._preview(draft),
-                    "draft_length": len(draft),
-                    "max_draft_chars": self._config.max_draft_chars,
+                    "reply_preview": self._preview(reply_text),
+                    "reply_length": len(reply_text),
+                    "max_reply_chars": self._config.max_reply_chars,
                     "recent_window": self._window_context(frame),
                 },
             )
+
+        # The first quality gate rejects replies that merely repeat the triggering message.
         trigger_text = frame.current_message.content.lower()
-        trigger_similarity = SequenceMatcher(a=trigger_text, b=draft.lower()).ratio() if trigger_text else 0.0
+        trigger_similarity = SequenceMatcher(a=trigger_text, b=reply_text.lower()).ratio() if trigger_text else 0.0
         if trigger_text and trigger_similarity > 0.92:
             trigger_subject = self._message_subject(frame.current_message, similarity=trigger_similarity)
             return HarnessFailure(
-                code="draft_mirrors_trigger_message",
+                code="reply_mirrors_trigger_message",
                 reason=(
-                    f"Reply draft is too similar to the triggering message {frame.current_message.message_id} "
+                    f"Reply text is too similar to the triggering message {frame.current_message.message_id} "
                     f"from {frame.current_message.sender_name} (similarity {trigger_similarity:.3f}): "
                     f"\"{self._preview(frame.current_message.content)}\""
                 ),
                 context={
-                    "draft_preview": self._preview(draft),
-                    "draft_length": len(draft),
+                    "reply_preview": self._preview(reply_text),
+                    "reply_length": len(reply_text),
                     "offending_messages": [trigger_subject],
                     "recent_window": self._window_context(frame),
                     "similarity_threshold": 0.92,
                 },
             )
+
+        # The second quality gate catches near-copies of any visible recent message.
         visible_messages = self._visible_window_messages(frame)
         offending_messages = [
             self._message_subject(message, similarity=similarity)
             for message in visible_messages
-            if (similarity := SequenceMatcher(a=message.content.lower(), b=draft.lower()).ratio()) > 0.9
+            if (similarity := SequenceMatcher(a=message.content.lower(), b=reply_text.lower()).ratio()) > 0.9
         ]
         if offending_messages:
             primary = max(offending_messages, key=lambda item: float(item["similarity"]))
             return HarnessFailure(
-                code="draft_too_similar_to_recent_message",
+                code="reply_too_similar_to_recent_message",
                 reason=(
-                    f"Reply draft is too similar to recent message {primary['message_id']} from "
+                    f"Reply text is too similar to recent message {primary['message_id']} from "
                     f"{primary['sender_name']} (similarity {primary['similarity']:.3f}): "
                     f"\"{primary['content_preview']}\""
                 ),
                 context={
-                    "draft_preview": self._preview(draft),
-                    "draft_length": len(draft),
+                    "reply_preview": self._preview(reply_text),
+                    "reply_length": len(reply_text),
                     "offending_messages": offending_messages,
                     "recent_window": self._window_context(frame),
                     "similarity_threshold": 0.9,
@@ -111,16 +117,18 @@ class ConsciousHarness:
         pending = frame.pending_interruption
         if pending is None:
             return None
-        draft = " ".join((semantic_decision.draft_text or "").lower().split())
-        if not draft:
+        normalized_reply = " ".join((semantic_decision.reply_text or "").lower().split())
+        if not normalized_reply:
             return None
+
+        # Accepted interruptions must produce a fresh reply, not reuse abandoned chunks verbatim.
         offending_chunks: list[dict[str, object]] = []
         for chunk in pending.remaining_reply_chunks:
             normalized_chunk = " ".join(chunk.lower().split())
             if not normalized_chunk:
                 continue
-            similarity = SequenceMatcher(a=normalized_chunk, b=draft).ratio()
-            if similarity > 0.88 or normalized_chunk in draft:
+            similarity = SequenceMatcher(a=normalized_chunk, b=normalized_reply).ratio()
+            if similarity > 0.88 or normalized_chunk in normalized_reply:
                 offending_chunks.append(
                     {
                         "chunk_preview": self._preview(chunk),
@@ -137,8 +145,8 @@ class ConsciousHarness:
                 f"(similarity {primary['similarity']:.3f}): \"{primary['chunk_preview']}\""
             ),
             context={
-                "draft_preview": self._preview(semantic_decision.draft_text or ""),
-                "draft_length": len((semantic_decision.draft_text or "").strip()),
+                "reply_preview": self._preview(semantic_decision.reply_text or ""),
+                "reply_length": len((semantic_decision.reply_text or "").strip()),
                 "offending_remaining_chunks": offending_chunks,
                 "remaining_reply_chunks": [self._preview(chunk) for chunk in pending.remaining_reply_chunks],
                 "recent_window": self._window_context(frame),
@@ -285,6 +293,8 @@ class AILayer:
 
     def _normalize_decision(self, frame: ContextFramePayload, decision: SemanticDecisionSchema) -> SemanticDecisionSchema:
         visible_memories = {memory.memory_id: memory for memory in frame.relevant_memories}
+
+        # Normalize the reply target first so downstream delivery receives a concrete Telegram target.
         if decision.action == "reply":
             recommended_reply_target = frame.recommended_reply_candidate or frame.current_message.message_id
             if decision.reply_to_message_id is None:
@@ -297,7 +307,9 @@ class AILayer:
                 decision.reply_to_message_id = frame.recommended_reply_candidate
         else:
             decision.reply_to_message_id = None
-            decision.draft_text = None
+            decision.reply_text = None
+
+        # Memory expansion and mutation fields are only valid when they point at visible memory cards.
         if decision.action != "expand_memory":
             decision.referenced_memory_ids = []
         if decision.action == "expand_memory" and not decision.referenced_memory_ids:
@@ -344,6 +356,8 @@ class AILayer:
             decision.target_memory_sender_id = None
             decision.rewritten_memory_text = None
             decision.rewritten_memory_tags = []
+
+        # Codex metadata selects routing for open questions and notifications; it never changes reply authorship.
         open_question = self._selected_open_question(frame, decision)
         if open_question is not None:
             decision.codex_app_server_id = open_question.app_server_id
@@ -390,7 +404,7 @@ class AILayer:
         if frame.linear_task_list is not None and decision.action == "reply":
             decision.action = "ignore"
             decision.reply_to_message_id = None
-            decision.draft_text = None
+            decision.reply_text = None
         decision.trigger_message_id = frame.trigger_message_id
         decision.session_id = frame.session_id
         decision.frame_created_at = frame.frame_created_at
@@ -452,7 +466,7 @@ class AILayer:
             action=decision.action,
             reply_to_message_id=decision.reply_to_message_id,
             chat_id=frame.chat_id,
-            draft_text=decision.draft_text,
+            reply_text=decision.reply_text,
             referenced_memory_ids=list(decision.referenced_memory_ids),
             confidence=decision.confidence,
             notes=notes,
@@ -481,7 +495,7 @@ class AILayer:
             action="ignore",
             reply_to_message_id=None,
             chat_id=frame.chat_id,
-            draft_text=None,
+            reply_text=None,
             referenced_memory_ids=[],
             confidence=0.0,
             notes=notes,

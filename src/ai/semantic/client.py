@@ -72,7 +72,7 @@ class SemanticModelClient:
                 self._config.memory_prompt,
                 (
                     "Harness retry mode: revise the previous structured decision using the harness feedback. "
-                    "If you still want to reply, produce a materially better draft that addresses the flagged issue. "
+                    "If you still want to reply, produce materially better reply_text that addresses the flagged issue. "
                     "If no good reply exists, choose a different action."
                     if harness_feedback or previous_decision
                     else "Harness retry mode: none"
@@ -123,6 +123,7 @@ class SemanticModelClient:
         decision: SemanticDecisionSchema,
         tools: ToolSession | None,
     ) -> SemanticDecisionSchema:
+        # Only Telegram-originated task starts get an immediate acknowledgement back to the user.
         if (
             tools is None
             or frame.linear_task_list is not None
@@ -132,17 +133,19 @@ class SemanticModelClient:
             or not self._codex_task_started(tools)
         ):
             return decision
-        if decision.action == "reply" and (decision.draft_text or "").strip():
+        if decision.action == "reply" and (decision.reply_text or "").strip():
             return decision
         notes = list(decision.notes)
         if self._CODEX_TASK_STARTED_NOTE not in notes:
             notes.append(self._CODEX_TASK_STARTED_NOTE)
+
+        # The acknowledgement is Amber's reply text; Codex metadata stays clear because no Codex routing is needed.
         return decision.model_copy(
             update={
                 "action": "reply",
                 "reply_to_message_id": frame.recommended_reply_candidate or frame.current_message.message_id,
                 "chat_id": frame.chat_id,
-                "draft_text": self._CODEX_TASK_STARTED_ACK,
+                "reply_text": self._CODEX_TASK_STARTED_ACK,
                 "referenced_memory_ids": [],
                 "confidence": max(decision.confidence, 0.9),
                 "notes": notes,

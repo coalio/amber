@@ -12,7 +12,7 @@ class SemanticDecisionSchema(BaseModel):
     action: Literal["ignore", "reply", "sleep", "expand_memory", "disengage"]
     reply_to_message_id: int | None = None
     chat_id: int | str
-    draft_text: str | None = None
+    reply_text: str | None = None
     referenced_memory_ids: list[str] = Field(default_factory=list)
     confidence: float
     notes: list[str] = Field(default_factory=list)
@@ -77,7 +77,7 @@ class InterruptionDecisionSchema(BaseModel):
     interrupt_decision: Literal["accept", "decline"]
     action: Literal["ignore", "reply", "sleep", "expand_memory", "disengage"]
     reply_to_message_id: int | None = None
-    draft_text: str | None = None
+    reply_text: str | None = None
     referenced_memory_ids: list[str] = Field(default_factory=list)
     confidence: float = 0.0
     reason: str

@@ -54,7 +54,7 @@ class RecordingProvider:
                 interrupt_decision="accept",
                 action="reply",
                 reply_to_message_id=413,
-                draft_text="yeah exactly, and the short version is overload selection by substitution failure.",
+                reply_text="yeah exactly, and the short version is overload selection by substitution failure.",
                 referenced_memory_ids=[],
                 confidence=0.9,
                 reason="Steering message changed the reply plan.",
@@ -64,7 +64,7 @@ class RecordingProvider:
             action="ignore",
             reply_to_message_id=None,
             chat_id=1001001001,
-            draft_text=None,
+            reply_text=None,
             referenced_memory_ids=[],
             confidence=0.2,
             notes=[],
@@ -105,7 +105,7 @@ class RecordingProvider:
                     interrupt_decision="accept",
                     action="reply",
                     reply_to_message_id=413,
-                    draft_text="yeah exactly, and the short version is overload selection by substitution failure.",
+                    reply_text="yeah exactly, and the short version is overload selection by substitution failure.",
                     referenced_memory_ids=[],
                     confidence=0.9,
                     reason="Steering message changed the reply plan.",
@@ -118,7 +118,7 @@ class RecordingProvider:
                 action="ignore",
                 reply_to_message_id=None,
                 chat_id=1001001001,
-                draft_text=None,
+                reply_text=None,
                 referenced_memory_ids=[],
                 confidence=0.2,
                 notes=[],
@@ -183,7 +183,7 @@ class CodexStartThenIgnoreProvider:
             action="ignore",
             reply_to_message_id=None,
             chat_id=1001001001,
-            draft_text=None,
+            reply_text=None,
             referenced_memory_ids=[],
             confidence=0.2,
             notes=[],
@@ -376,7 +376,7 @@ def test_semantic_client_includes_interruption_retry_feedback_when_requested() -
             interrupt_decision="accept",
             action="reply",
             reply_to_message_id=413,
-            draft_text="second chunk",
+            reply_text="second chunk",
             referenced_memory_ids=[],
             confidence=0.5,
             reason="bad first pass",
@@ -423,7 +423,7 @@ def test_semantic_client_acknowledges_successful_codex_task_start() -> None:
     assert decision.action == "reply"
     assert decision.reply_to_message_id == 412
     # Starting Codex is the behavior; Amber's acknowledgement wording can evolve.
-    assert isinstance(decision.draft_text, str) and decision.draft_text.strip()
+    assert isinstance(decision.reply_text, str) and decision.reply_text.strip()
     assert decision.notes
     tools = provider.calls[-1]["tools"]
     assert [execution.name for execution in tools.executions] == ["GetTool", "CodexRunTask"]
@@ -449,7 +449,7 @@ def test_semantic_client_keeps_linear_codex_task_start_silent() -> None:
     decision = client.decide(frame)
 
     assert decision.action == "ignore"
-    assert decision.draft_text is None
+    assert decision.reply_text is None
 
 
 def _config(tool_registry: ToolRegistry | None = None) -> SemanticConfig:

@@ -87,7 +87,7 @@ def test_same_user_interrupt_pauses_batch_and_persists_remaining_plan(tmp_path, 
                 ordered_messages=["first chunk", "second chunk", "third chunk"],
                 reply_to_message_id=411,
                 mood="calm",
-                raw_output="first chunk\nsecond chunk\nthird chunk",
+                raw_reply_text="first chunk\nsecond chunk\nthird chunk",
                 no_send=False,
             ),
         )
@@ -157,7 +157,7 @@ def test_messages_arriving_between_chunks_do_not_pause_batch(tmp_path, monkeypat
                 ordered_messages=["first chunk", "second chunk"],
                 reply_to_message_id=411,
                 mood="calm",
-                raw_output="first chunk\nsecond chunk",
+                raw_reply_text="first chunk\nsecond chunk",
                 no_send=False,
             ),
         )

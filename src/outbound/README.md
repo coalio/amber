@@ -1,11 +1,11 @@
 # Outbound
 
-Outbound preparation turns semantic draft text into delivery-ready Telegram message chunks.
+Outbound preparation turns Amber's approved reply text into delivery-ready Telegram message chunks.
 
 ## Responsibilities
 
 - Convert non-reply decisions into `no_send` outbound events.
-- Preserve Amber's semantic draft text while preparing Telegram delivery chunks.
+- Preserve Amber's reply text while preparing Telegram delivery chunks.
 - Split long output into chunks while preserving code blocks.
 - Preserve reply target and visible-read metadata from the semantic decision.
 

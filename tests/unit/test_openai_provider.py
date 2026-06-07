@@ -16,7 +16,7 @@ class FakeResponsesClient:
         return SimpleNamespace(
             output_text=(
                 '{"action":"ignore","reply_to_message_id":null,"chat_id":1001001001,'
-                '"draft_text":null,"referenced_memory_ids":[],"confidence":0.25,'
+                '"reply_text":null,"referenced_memory_ids":[],"confidence":0.25,'
                 '"notes":[],"trigger_message_id":null,"session_id":null}'
             )
         )
@@ -63,7 +63,7 @@ class ToolCallingResponsesClient:
                 id="resp_final",
                 output_text=(
                     '{"action":"ignore","reply_to_message_id":null,"chat_id":1001001001,'
-                    '"draft_text":null,"referenced_memory_ids":[],"confidence":0.25,'
+                    '"reply_text":null,"referenced_memory_ids":[],"confidence":0.25,'
                     '"notes":[],"trigger_message_id":null,"session_id":null}'
                 ),
                 output=[],

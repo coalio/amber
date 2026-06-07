@@ -74,13 +74,13 @@ def test_ambiguous_reply_with_multiple_open_questions_remains_unbound() -> None:
             action="reply",
             reply_to_message_id=412,
             chat_id=1001001001,
-            draft_text="which task did you mean, the api one or the ui one?",
+            reply_text="which task did you mean, the api one or the ui one?",
             referenced_memory_ids=[],
             confidence=0.9,
             notes=["ambiguous_open_question"],
         )
     )
-    layer = AILayer(AIConfig(semantic_retry_budget=1, max_draft_chars=320), client)
+    layer = AILayer(AIConfig(semantic_retry_budget=1, max_reply_chars=320), client)
 
     decision = layer._call_with_harness(frame)
 
@@ -89,7 +89,7 @@ def test_ambiguous_reply_with_multiple_open_questions_remains_unbound() -> None:
     assert decision.codex_task_id is None
     assert decision.codex_tool_call_id is None
     # Ambiguous replies should stay with Amber instead of being attached to a specific Codex task.
-    assert isinstance(decision.draft_text, str) and decision.draft_text.strip()
+    assert isinstance(decision.reply_text, str) and decision.reply_text.strip()
 
 
 class FakeCodexAdapter(BaseAdapter):

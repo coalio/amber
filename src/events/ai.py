@@ -13,7 +13,7 @@ class SemanticDecisionPayload(BaseModel):
     action: str
     reply_to_message_id: int | None = None
     chat_id: int | str
-    draft_text: str | None = None
+    reply_text: str | None = None
     referenced_memory_ids: list[str] = Field(default_factory=list)
     confidence: float = 0.0
     notes: list[str] = Field(default_factory=list)

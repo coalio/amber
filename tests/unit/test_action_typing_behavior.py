@@ -63,7 +63,7 @@ def test_action_types_and_sends_each_chunk_sequentially(tmp_path, monkeypatch: p
                 ordered_messages=["first chunk", "second chunk", "third chunk"],
                 reply_to_message_id=411,
                 mood="calm",
-                raw_output="first chunk\nsecond chunk\nthird chunk",
+                raw_reply_text="first chunk\nsecond chunk\nthird chunk",
                 no_send=False,
             ),
         )
@@ -224,7 +224,7 @@ def test_filler_chunk_forces_configurable_non_typing_pause(tmp_path, monkeypatch
                 ordered_messages=["hmmm,", "next message"],
                 reply_to_message_id=411,
                 mood="calm",
-                raw_output="hmmm,\nnext message",
+                raw_reply_text="hmmm,\nnext message",
                 no_send=False,
             ),
         )
@@ -263,7 +263,7 @@ def test_pre_send_visible_read_delay_shaves_elapsed_model_time(tmp_path, monkeyp
                 ordered_messages=["single reply"],
                 reply_to_message_id=411,
                 mood="calm",
-                raw_output="single reply",
+                raw_reply_text="single reply",
                 no_send=False,
                 frame_created_at=now - timedelta(seconds=3),
                 visible_read_not_before=now + timedelta(seconds=2),
@@ -305,7 +305,7 @@ def test_archived_self_messages_only_reply_on_first_chunk(tmp_path, monkeypatch:
                 ordered_messages=["before", "after"],
                 reply_to_message_id=411,
                 mood="calm",
-                raw_output="before\nafter",
+                raw_reply_text="before\nafter",
                 no_send=False,
             ),
         )

@@ -57,7 +57,7 @@ class Settings(BaseModel):
     attention_memory_limit: int
     always_surface_telegram_ids: tuple[str, ...]
     ai_semantic_retry_budget: int
-    ai_max_draft_chars: int
+    ai_max_reply_chars: int
     ai_max_output_tokens: int
     ai_temperature: float
     ai_orchestration_prompt_path: Path
@@ -112,7 +112,7 @@ ENV_OVERRIDES: dict[str, tuple[str, ...]] = {
     "AMBER_AI_API_KEY": ("ai", "api_key"),
     "AMBER_AI_MODEL": ("ai", "model"),
     "AMBER_AI_SEMANTIC_RETRY_BUDGET": ("ai", "semantic_retry_budget"),
-    "AMBER_AI_MAX_DRAFT_CHARS": ("ai", "max_draft_chars"),
+    "AMBER_AI_MAX_REPLY_CHARS": ("ai", "max_reply_chars"),
     "AMBER_AI_MAX_OUTPUT_TOKENS": ("ai", "max_output_tokens"),
     "AMBER_AI_TEMPERATURE": ("ai", "temperature"),
     "API_ID": ("telegram", "api_id"),
@@ -293,7 +293,7 @@ def _get_settings_cached(workspace_key: str | None, config_key: str | None) -> S
         attention_memory_limit=int(_value(data, ("attention", "memory_limit"))),
         always_surface_telegram_ids=_list_value(_value(data, ("attention", "always_surface_telegram_ids"))),
         ai_semantic_retry_budget=int(_value(data, ("ai", "semantic_retry_budget"))),
-        ai_max_draft_chars=int(_value(data, ("ai", "max_draft_chars"))),
+        ai_max_reply_chars=int(_value(data, ("ai", "max_reply_chars"))),
         ai_max_output_tokens=int(_value(data, ("ai", "max_output_tokens"))),
         ai_temperature=float(_value(data, ("ai", "temperature"))),
         ai_orchestration_prompt_path=system_dir / "AI_ORCHESTRATION.md",

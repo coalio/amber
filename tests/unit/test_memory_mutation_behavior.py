@@ -57,7 +57,7 @@ def test_reply_can_rewrite_memory_for_exact_profile(tmp_path) -> None:
                 chat_id=1001001001,
                 session_id=session.session_id,
                 trigger_message_id=501,
-                draft_text="fair enough",
+                reply_text="fair enough",
                 confidence=0.8,
                 memory_mutation="rewrite",
                 target_memory_id=memory_card.memory_id,

@@ -110,7 +110,7 @@ def summarize_event_payload(event: BaseEvent) -> dict[str, object] | None:
         }
     if isinstance(event, SemanticDecisionMadeEvent):
         payload = event.payload
-        draft_text = payload.draft_text or ""
+        reply_text = payload.reply_text or ""
         return {
             "action": payload.action,
             "confidence": _round_score(payload.confidence),
@@ -119,8 +119,8 @@ def summarize_event_payload(event: BaseEvent) -> dict[str, object] | None:
             "session_id": payload.session_id,
             "referenced_memory_count": len(payload.referenced_memory_ids),
             "notes": list(payload.notes),
-            "draft_length": len(draft_text),
-            "draft_preview": _preview(draft_text),
+            "reply_length": len(reply_text),
+            "reply_preview": _preview(reply_text),
             "disengage_sender_id": payload.disengage_sender_id,
             "disengage_reason": _preview(payload.disengage_reason),
             "ignore_for_seconds": payload.ignore_for_seconds,
@@ -138,7 +138,7 @@ def summarize_event_payload(event: BaseEvent) -> dict[str, object] | None:
         }
     if isinstance(event, OutboundMessagePreparedEvent):
         payload = event.payload
-        first_message = payload.ordered_messages[0] if payload.ordered_messages else payload.raw_output
+        first_message = payload.ordered_messages[0] if payload.ordered_messages else payload.raw_reply_text
         return {
             "no_send": payload.no_send,
             "session_id": payload.session_id,

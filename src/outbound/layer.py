@@ -20,6 +20,8 @@ class OutboundPreparationLayer:
         with emitter_context("outbound_preparation"):
             state = self._state_store.snapshot()
             payload = event.payload
+
+            # Non-reply decisions still emit an outbound event so action/context layers can settle state.
             if payload.action != "reply":
                 EventBus.emit(
                     OutboundMessagePreparedEvent(
@@ -32,7 +34,7 @@ class OutboundPreparationLayer:
                             ordered_messages=[],
                             reply_to_message_id=payload.reply_to_message_id,
                             mood=state.mood,
-                            raw_output="",
+                            raw_reply_text="",
                             no_send=True,
                             frame_created_at=payload.frame_created_at,
                             visible_read_not_before=payload.visible_read_not_before,
@@ -44,16 +46,17 @@ class OutboundPreparationLayer:
                 )
                 return
 
-            self._emit_prepared(event, payload, self._prepare_plain_draft(payload.draft_text or ""), state.mood)
+            # Reply text is already approved by the AI layer; outbound only trims and chunks it for Telegram.
+            self._emit_prepared(event, payload, self._prepare_reply_text(payload.reply_text or ""), state.mood)
 
     def _emit_prepared(
         self,
         event: SemanticDecisionMadeEvent,
         payload: SemanticDecisionPayload,
-        prepared_text: str,
+        prepared_reply_text: str,
         mood: str,
     ) -> None:
-        ordered_messages = self._split_output(prepared_text)
+        ordered_messages = self._split_reply_text(prepared_reply_text)
         no_send = not any(item.strip() for item in ordered_messages)
         EventBus.emit(
             OutboundMessagePreparedEvent(
@@ -66,7 +69,7 @@ class OutboundPreparationLayer:
                     ordered_messages=[] if no_send else ordered_messages,
                     reply_to_message_id=payload.reply_to_message_id,
                     mood=mood,
-                    raw_output=prepared_text,
+                    raw_reply_text=prepared_reply_text,
                     no_send=no_send,
                     frame_created_at=payload.frame_created_at,
                     visible_read_not_before=payload.visible_read_not_before,
@@ -77,17 +80,18 @@ class OutboundPreparationLayer:
             )
         )
 
-    def _prepare_plain_draft(self, draft_text: str) -> str:
-        return draft_text.strip()
+    def _prepare_reply_text(self, reply_text: str) -> str:
+        return reply_text.strip()
 
-    def _split_output(self, output_text: str) -> list[str]:
-        cleaned = output_text.strip()
+    def _split_reply_text(self, reply_text: str) -> list[str]:
+        cleaned = reply_text.strip()
         if not cleaned:
             return []
         messages: list[str] = []
         code_block_lines: list[str] = []
         inside_code_block = False
 
+        # Preserve fenced code blocks as atomic messages while normal prose can be split.
         for raw_line in cleaned.splitlines():
             line = raw_line.rstrip()
             stripped = line.strip()

@@ -100,14 +100,14 @@ async def normalize_telegram_message(message: Message) -> TelegramMessageReceive
     media_type = infer_media_type(message)
     content, raw_text = normalize_content(message.message, media_type)
 
-    # Normalize reply metadata separately so context can reason about threaded replies.
+    # normalize reply metadata for thread context
     reply_to_content = None
     reply_to_raw_text = None
     if reply_message is not None:
         reply_media_type = infer_media_type(reply_message)
         reply_to_content, reply_to_raw_text = normalize_content(reply_message.message, reply_media_type)
 
-    # Preserve raw Telegram identifiers alongside normalized content for downstream transport operations.
+    # keep raw telegram ids for transport
     payload = TelegramMessagePayload(
         message_id=int(message.id),
         chat_id=int(message.chat_id) if message.chat_id is not None else 0,

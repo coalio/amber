@@ -88,7 +88,7 @@ def test_ambiguous_reply_with_multiple_open_questions_remains_unbound() -> None:
     assert decision.codex_app_server_id is None
     assert decision.codex_task_id is None
     assert decision.codex_tool_call_id is None
-    # Ambiguous replies should stay with Amber instead of being attached to a specific Codex task.
+    # keep ambiguous replies with amber
     assert isinstance(decision.reply_text, str) and decision.reply_text.strip()
 
 

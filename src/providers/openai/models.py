@@ -15,14 +15,14 @@ class OpenAIModelContract:
 
 
 OPENAI_MODEL_CONTRACTS: tuple[OpenAIModelContract, ...] = (
-    # GPT-5 family is treated as a reasoning-model family in this project.
-    # Live request validation showed the configured GPT-5.4 model rejects `temperature`.
+    # gpt-5 is reasoning-model family here
+    # live gpt-5.4 rejects temperature
     OpenAIModelContract(
         prefixes=("gpt-5",),
         unsupported_request_fields=frozenset({"temperature"}),
         supports_reasoning_effort=True,
     ),
-    # GPT-4.1 family is used here as the cheaper non-reasoning rewrite model.
+    # gpt-4.1 is the cheaper non-reasoning model
     OpenAIModelContract(
         prefixes=("gpt-4.1",),
         unsupported_request_fields=frozenset(),

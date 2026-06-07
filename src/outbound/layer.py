@@ -21,7 +21,7 @@ class OutboundPreparationLayer:
             state = self._state_store.snapshot()
             payload = event.payload
 
-            # Non-reply decisions still emit an outbound event so action/context layers can settle state.
+            # emit no-send events so downstream state settles
             if payload.action != "reply":
                 EventBus.emit(
                     OutboundMessagePreparedEvent(
@@ -46,7 +46,7 @@ class OutboundPreparationLayer:
                 )
                 return
 
-            # Reply text is already approved by the AI layer; outbound only trims and chunks it for Telegram.
+            # reply text is approved; only trim and chunk
             self._emit_prepared(event, payload, self._prepare_reply_text(payload.reply_text or ""), state.mood)
 
     def _emit_prepared(
@@ -91,7 +91,7 @@ class OutboundPreparationLayer:
         code_block_lines: list[str] = []
         inside_code_block = False
 
-        # Preserve fenced code blocks as atomic messages while normal prose can be split.
+        # keep fenced code atomic; split prose
         for raw_line in cleaned.splitlines():
             line = raw_line.rstrip()
             stripped = line.strip()

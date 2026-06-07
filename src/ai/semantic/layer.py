@@ -30,7 +30,7 @@ class ConsciousHarness:
             return None
         reply_text = (decision.reply_text or "").strip()
 
-        # A reply decision must already contain the complete text Amber will send.
+        # reply decisions must carry final send text
         if not reply_text:
             return HarnessFailure(
                 code="reply_requires_non_empty_text",
@@ -56,7 +56,7 @@ class ConsciousHarness:
                 },
             )
 
-        # The first quality gate rejects replies that merely repeat the triggering message.
+        # reject repeats of the trigger
         trigger_text = frame.current_message.content.lower()
         trigger_similarity = SequenceMatcher(a=trigger_text, b=reply_text.lower()).ratio() if trigger_text else 0.0
         if trigger_text and trigger_similarity > 0.92:
@@ -77,7 +77,7 @@ class ConsciousHarness:
                 },
             )
 
-        # The second quality gate catches near-copies of any visible recent message.
+        # reject near-copies of visible messages
         visible_messages = self._visible_window_messages(frame)
         offending_messages = [
             self._message_subject(message, similarity=similarity)
@@ -121,7 +121,7 @@ class ConsciousHarness:
         if not normalized_reply:
             return None
 
-        # Accepted interruptions must produce a fresh reply, not reuse abandoned chunks verbatim.
+        # accepted interruptions need fresh text
         offending_chunks: list[dict[str, object]] = []
         for chunk in pending.remaining_reply_chunks:
             normalized_chunk = " ".join(chunk.lower().split())
@@ -294,7 +294,7 @@ class AILayer:
     def _normalize_decision(self, frame: ContextFramePayload, decision: SemanticDecisionSchema) -> SemanticDecisionSchema:
         visible_memories = {memory.memory_id: memory for memory in frame.relevant_memories}
 
-        # Normalize the reply target first so downstream delivery receives a concrete Telegram target.
+        # settle reply target before delivery
         if decision.action == "reply":
             recommended_reply_target = frame.recommended_reply_candidate or frame.current_message.message_id
             if decision.reply_to_message_id is None:
@@ -309,7 +309,7 @@ class AILayer:
             decision.reply_to_message_id = None
             decision.reply_text = None
 
-        # Memory expansion and mutation fields are only valid when they point at visible memory cards.
+        # memory fields must point at visible cards
         if decision.action != "expand_memory":
             decision.referenced_memory_ids = []
         if decision.action == "expand_memory" and not decision.referenced_memory_ids:
@@ -357,7 +357,7 @@ class AILayer:
             decision.rewritten_memory_text = None
             decision.rewritten_memory_tags = []
 
-        # Codex metadata selects routing for open questions and notifications; it never changes reply authorship.
+        # codex metadata routes only; amber authors replies
         open_question = self._selected_open_question(frame, decision)
         if open_question is not None:
             decision.codex_app_server_id = open_question.app_server_id

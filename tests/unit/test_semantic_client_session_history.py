@@ -422,7 +422,7 @@ def test_semantic_client_acknowledges_successful_codex_task_start() -> None:
 
     assert decision.action == "reply"
     assert decision.reply_to_message_id == 412
-    # Starting Codex is the behavior; Amber's acknowledgement wording can evolve.
+    # codex start is the behavior; wording can change
     assert isinstance(decision.reply_text, str) and decision.reply_text.strip()
     assert decision.notes
     tools = provider.calls[-1]["tools"]

@@ -65,7 +65,7 @@ def test_work_mode_message_starts_codex_task_and_replies(monkeypatch: pytest.Mon
     assert frames and frames[-1].payload.trigger_message_id == 1440
     assert semantic and semantic[-1].payload.action == "reply"
     assert outbound[-1].payload.sent_message_ids
-    # Amber owns the user-facing wording; this flow only requires a real reply to the triggering message.
+    # amber owns wording; require a real reply to the trigger
     _assert_non_empty_messages(transport.records[-1].ordered_messages)
     assert transport.records[-1].reply_to_message_id == 1440
 
@@ -116,7 +116,7 @@ def test_codex_notification_with_requested_output_is_sent_without_rewrite(
 
     assert len(fake_openai.responses.calls) == 1
     sent_text = " ".join(transport.records[-1].ordered_messages).lower()
-    # Codex supplies notification context; Amber decides the outbound text while preserving requested output.
+    # codex supplies context; amber preserves requested output
     _assert_non_empty_messages(transport.records[-1].ordered_messages)
     assert "120" in sent_text
     assert "send me" not in sent_text

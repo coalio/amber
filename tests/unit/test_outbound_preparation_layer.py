@@ -24,7 +24,7 @@ def test_outbound_preparation_layer_emits_one_message_per_non_empty_line(tmp_pat
 
     layer.handle_semantic_decision(_reply_event(reply_text="first thought\nsecond thought\n\nthird thought"))
 
-    # The outbound boundary preserves paragraph intent while dropping empty spacer lines.
+    # preserve paragraphs; drop empty spacer lines
     assert capture
     assert capture[-1].payload.ordered_messages == ["first thought", "second thought", "third thought"]
 
@@ -43,7 +43,7 @@ def test_outbound_preparation_layer_keeps_fenced_code_blocks_together_and_wraps_
 
     assert capture
     ordered_messages = capture[-1].payload.ordered_messages
-    # Fenced code is a single delivery unit; only surrounding prose should be chunked.
+    # keep fenced code atomic; chunk prose only
     assert ordered_messages[:2] == ["before", "```python\nprint('hi')\nprint('bye')\n```"]
     assert " ".join(ordered_messages[2:]) == "after this line should wrap"
     assert all(len(message) <= 12 for message in ordered_messages[2:])
@@ -60,7 +60,7 @@ def test_codex_tagged_replies_use_standard_outbound_contract(tmp_path) -> None:
 
     normal_payload = capture[-2].payload
     codex_payload = capture[-1].payload
-    # Codex metadata is routing context, not authorship or a special rewrite path.
+    # codex metadata is routing context only
     assert codex_payload.no_send is False
     assert codex_payload.raw_reply_text == normal_payload.raw_reply_text
     assert codex_payload.ordered_messages == normal_payload.ordered_messages

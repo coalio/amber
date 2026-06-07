@@ -80,7 +80,7 @@ class ActionLayer:
     def refresh_sleep_window(self) -> None:
         state = self._state_store.snapshot()
 
-        # Disabled sleep mode forces a stable awake state for tests and always-on runtimes.
+        # force awake state when sleep is disabled
         if self._config.disable_sleep_state:
             if (
                 state.sleep_state != "awake"
@@ -99,7 +99,7 @@ class ActionLayer:
             )
             return
 
-        # Real sleep mode computes the local window, raises fatigue state, and schedules wake-up.
+        # compute sleep window, fatigue, and wake schedule
         window = compute_sleep_window(state, self._timezone_name)
         now_local = local_now(self._timezone_name)
         tired_window_start = datetime.fromisoformat(str(window["tired_window_start"]))
@@ -116,7 +116,7 @@ class ActionLayer:
                 return
             payload = event.payload
 
-            # Prepare visible-read state before any typing delay or send attempt can expose activity.
+            # prepare visible-read state before typing
             read_key = self._visible_read_key(payload.chat_id, payload.session_id)
             pending_visible_read = self._pending_visible_reads.get(read_key)
             active_visible_read = pending_visible_read
@@ -135,7 +135,7 @@ class ActionLayer:
                     visible_not_before=payload.visible_read_not_before,
                 )
 
-            # Resolve the user who can interrupt this batch from the reply target or active Codex question.
+            # resolve who can interrupt this batch
             reply_target_sender_id, reply_target_sender_name = self._resolve_reply_target(payload.chat_id, payload.reply_to_message_id)
             if reply_target_sender_id is None:
                 reply_target_sender_id, reply_target_sender_name = self._open_question_reply_target(payload.chat_id)
@@ -175,7 +175,7 @@ class ActionLayer:
             if remaining_visible_delay > 0:
                 self._apply_real_delay(remaining_visible_delay if self._config.enable_real_delays else 0.0)
 
-            # Messages already present before the first chunk can stop the whole outbound batch.
+            # stop before first chunk if target already replied
             interruption_message_id = self._maybe_interrupt_before_send(
                 chat_id=payload.chat_id,
                 correlation_id=event.correlation_id,
@@ -210,7 +210,7 @@ class ActionLayer:
                 )
                 return
 
-            # Emit the visible-read event just before delivery so the chat looks read before Amber replies.
+            # mark visible messages read before delivery
             if active_visible_read is not None:
                 self._emit_visible_read(
                     correlation_id=event.correlation_id,
@@ -224,7 +224,7 @@ class ActionLayer:
                 self._pending_visible_reads.pop(read_key, None)
                 self._seen_visible_read_keys.add(read_key)
 
-            # No-send events still complete delivery bookkeeping without touching Telegram.
+            # finish no-send delivery without telegram io
             if payload.no_send or not payload.ordered_messages:
                 self._completed_event_ids.add(event.event_id)
                 delivery = OutboundDeliveryPayload(
@@ -243,7 +243,7 @@ class ActionLayer:
                 EventBus.emit(OutboundMessageSentEvent(correlation_id=event.correlation_id, chat_id=event.chat_id, payload=delivery))
                 return
 
-            # Send each chunk sequentially; transient transport failures get one scheduled retry.
+            # send chunks in order; retry one transport failure
             try:
                 sent_ids, sent_messages, interruption_message_id = self._send_outbound_messages(
                     event.correlation_id,
@@ -274,7 +274,7 @@ class ActionLayer:
                     self._scheduler.schedule_after(f"action_retry:{event.event_id}", 2.0, self.handle_prepared_message, event)
                 return
 
-            # Record the actual delivered chunks so interruptions and later context see what Amber sent.
+            # record delivered chunks for later context
             self._completed_event_ids.add(event.event_id)
             self._archive_outbound_messages(payload.chat_id, sent_messages, payload.reply_to_message_id, sent_ids)
             if sent_ids:
@@ -431,12 +431,12 @@ class ActionLayer:
         current_reply_to = reply_to_message_id
         chunk_count = len(ordered_messages)
 
-        # Interruption checks only apply to the person Amber is actively replying to.
+        # only the reply target can interrupt this batch
         reply_target_sender_id, reply_target_sender_name = self._resolve_reply_target(chat_id, reply_to_message_id)
         if reply_target_sender_id is None:
             reply_target_sender_id, reply_target_sender_name = self._open_question_reply_target(chat_id)
 
-        # Telegram reply threading applies only to the first chunk; later chunks continue the batch.
+        # reply threading applies only to the first chunk
         for chunk_index, message in enumerate(ordered_messages, start=1):
             typing_started_after_message_id = self._message_archive.latest_message_id(chat_id) or 0
             duration = self._typing_duration_seconds(message)
@@ -469,7 +469,7 @@ class ActionLayer:
             )
             current_reply_to = None
             if chunk_index < chunk_count:
-                # After each chunk, pause if the target user interrupted before sending the next chunk.
+                # pause if the target interrupted after this chunk
                 interruption_message_id = self._maybe_interrupt_after_chunk(
                     chat_id=chat_id,
                     correlation_id=correlation_id,

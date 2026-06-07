@@ -36,7 +36,7 @@ class TelegramReceiver:
             return
         state = self._state_store.snapshot()
 
-        # Backfill missed replies to active Codex questions after startup or reconnect.
+        # backfill missed replies to active codex questions
         for question in state.open_questions.values():
             min_id = 0
             if state.delivery_state.get("last_outbound_chat_id") == question.chat_id:
@@ -56,7 +56,7 @@ class TelegramReceiver:
     async def _on_new_message(self, event: events.NewMessage.Event) -> None:
         normalized = await self.normalize_message(event.message)
 
-        # Archive first so downstream context can resolve reply targets and interruption windows.
+        # archive before downstream context reads
         self._message_archive.put(normalized.payload)
         self._record_open_question_reply(normalized)
         should_mark_seen = await self._mark_active_chat_read_if_needed(normalized)
@@ -76,7 +76,7 @@ class TelegramReceiver:
             return
         message = normalized.payload
 
-        # Only user messages in chats with waiting Codex questions should become tool replies.
+        # record only replies to waiting codex questions
         if message.sender.is_self:
             return
         if not self._state_store.open_questions_for_chat(message.chat_id, sender_id=str(message.sender.id)):
@@ -96,7 +96,7 @@ class TelegramReceiver:
             return False
         state = self._state_store.snapshot()
 
-        # Keep active and open-question chats visibly read while Amber is already engaged there.
+        # keep engaged chats visibly read
         is_active_chat = state.active_chat_id is not None and str(state.active_chat_id) == str(message.chat_id)
         is_open_question_chat = any(str(question.chat_id) == str(message.chat_id) for question in state.open_questions.values())
         if not is_active_chat and not is_open_question_chat:
@@ -115,7 +115,7 @@ class TelegramReceiver:
         activity = self._typing_activity(event)
         now = utc_now()
 
-        # Telethon typing updates are transport-specific; emit a normalized receiver event for context/action layers.
+        # normalize telethon typing state for runtime layers
         normalized = TelegramTypingUpdatedEvent(
             chat_id=int(chat_id),
             payload=TelegramTypingPayload(

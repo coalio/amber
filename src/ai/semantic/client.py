@@ -123,7 +123,7 @@ class SemanticModelClient:
         decision: SemanticDecisionSchema,
         tools: ToolSession | None,
     ) -> SemanticDecisionSchema:
-        # Only Telegram-originated task starts get an immediate acknowledgement back to the user.
+        # acknowledge only telegram-originated task starts
         if (
             tools is None
             or frame.linear_task_list is not None
@@ -139,7 +139,7 @@ class SemanticModelClient:
         if self._CODEX_TASK_STARTED_NOTE not in notes:
             notes.append(self._CODEX_TASK_STARTED_NOTE)
 
-        # The acknowledgement is Amber's reply text; Codex metadata stays clear because no Codex routing is needed.
+        # reply as amber; clear codex routing metadata
         return decision.model_copy(
             update={
                 "action": "reply",

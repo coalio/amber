@@ -143,7 +143,7 @@ def test_context_frames_omit_fatigue_notice_when_sleep_state_is_disabled(tmp_pat
     message = ContextFrameMessagePayload(
         message_id=412,
         sender_id="user-123",
-        sender_name="Casey",
+        sender_name="Fixture Sender",
         content="Need a quick debug run on the sleep state override.",
         timestamp=datetime(2026, 4, 21, 3, 54, 5, tzinfo=timezone.utc),
     )
@@ -152,7 +152,7 @@ def test_context_frames_omit_fatigue_notice_when_sleep_state_is_disabled(tmp_pat
         chat_id=1001001001,
         last_updated_at=utc_now(),
         recent_messages=[message],
-        participant_names={"user-123": "Casey"},
+        participant_names={"user-123": "Fixture Sender"},
         engaged_user_ids={"user-123"},
         latest_trigger_message_id=412,
     )
@@ -169,7 +169,7 @@ def _telegram_received_event(content: str) -> TelegramMessageReceivedEvent:
     payload = TelegramMessagePayload(
         message_id=412,
         chat_id=1001001001,
-        sender=TelegramSenderPayload(id="user-123", name="Casey"),
+        sender=TelegramSenderPayload(id="user-123", name="Fixture Sender"),
         timestamp=datetime(2026, 4, 21, 3, 54, 5, tzinfo=timezone.utc),
         content=content,
         raw_text=content,

@@ -52,27 +52,27 @@ def test_context_frame_includes_conversation_window_and_engages_window_participa
     )
 
     for payload in [
-        _telegram_message(410, "user-a", "Ada", "earlier context"),
+        _telegram_message(410, "user-a", "Fixture Origin", "earlier context"),
         _telegram_message(411, "amber-self", "amber", "my earlier reply", is_self=True),
         _telegram_message(
             412,
             "user-b",
-            "Casey",
+            "Fixture Sender",
             "trigger message",
             reply_to_message_id=411,
             reply_to_sender_id="amber-self",
             reply_to_sender_name="amber",
             reply_to_content="my earlier reply",
         ),
-        _telegram_message(413, "user-c", "Dee", "follow-up one"),
-        _telegram_message(414, "user-a", "Ada", "follow-up two", reply_to_message_id=412, reply_to_sender_id="user-b", reply_to_sender_name="Casey"),
+        _telegram_message(413, "user-c", "Fixture Peer", "follow-up one"),
+        _telegram_message(414, "user-a", "Fixture Origin", "follow-up two", reply_to_message_id=412, reply_to_sender_id="user-b", reply_to_sender_name="Fixture Sender"),
     ]:
         archive.put(payload)
 
     trigger = ContextFrameMessagePayload(
         message_id=412,
         sender_id="user-b",
-        sender_name="Casey",
+        sender_name="Fixture Sender",
         content="trigger message",
         timestamp=datetime(2026, 4, 21, 3, 56, 0, tzinfo=timezone.utc),
         reply_to_message_id=411,
@@ -86,7 +86,7 @@ def test_context_frame_includes_conversation_window_and_engages_window_participa
         chat_id=1001001001,
         last_updated_at=utc_now(),
         recent_messages=[trigger],
-        participant_names={"user-b": "Casey"},
+        participant_names={"user-b": "Fixture Sender"},
         engaged_user_ids={"user-b"},
         latest_trigger_message_id=412,
     )

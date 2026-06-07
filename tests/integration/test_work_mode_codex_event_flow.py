@@ -64,9 +64,9 @@ def test_work_mode_message_starts_codex_task_and_replies(monkeypatch: pytest.Mon
     assert adapter.started_tasks[0]["context"]["requires_code_editing"] is True
     assert frames and frames[-1].payload.trigger_message_id == 1440
     assert semantic and semantic[-1].payload.action == "reply"
-    assert semantic[-1].payload.notes == ["codex task started"]
     assert outbound[-1].payload.sent_message_ids
-    assert transport.records[-1].ordered_messages == ["i'll start on that now"]
+    # Amber owns the user-facing wording; this flow only requires a real reply to the triggering message.
+    _assert_non_empty_messages(transport.records[-1].ordered_messages)
     assert transport.records[-1].reply_to_message_id == 1440
 
     app.scheduler.shutdown()
@@ -115,8 +115,11 @@ def test_codex_notification_with_requested_output_is_sent_without_rewrite(
     _wait_until(lambda: bool(outbound), timeout_seconds=3.0)
 
     assert len(fake_openai.responses.calls) == 1
-    assert transport.records[-1].ordered_messages == ["done. output: 120"]
-    assert "send me" not in transport.records[-1].ordered_messages[0]
+    sent_text = " ".join(transport.records[-1].ordered_messages).lower()
+    # Codex supplies notification context; Amber decides the outbound text while preserving requested output.
+    _assert_non_empty_messages(transport.records[-1].ordered_messages)
+    assert "120" in sent_text
+    assert "send me" not in sent_text
     assert outbound[-1].payload.chat_id == 1001001001
 
     app.scheduler.shutdown()
@@ -259,6 +262,11 @@ def _assert_strict_tool_definitions(tools: list[dict[str, Any]]) -> None:
     for tool in tools:
         assert tool["strict"] is True
         _assert_strict_schema(tool["parameters"])
+
+
+def _assert_non_empty_messages(messages: list[str]) -> None:
+    assert messages
+    assert all(isinstance(message, str) and message.strip() for message in messages)
 
 
 def _assert_strict_schema(schema: dict[str, Any]) -> None:

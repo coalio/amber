@@ -58,7 +58,7 @@ def test_attention_dispatch_logs_decision_summary_without_emit_wrapper_noise(cap
     assert payload["memory_count"] == 1
     assert payload["memory_ids"] == ["mem_patch_review"]
     assert payload["message_id"] == 412
-    assert payload["sender_name"] == "Casey"
+    assert payload["sender_name"] == "Fixture Sender"
     assert payload["content_preview"] == "Hey amber can you help me review this patch?"
     assert payload["reply_target_candidate"] == 412
     assert payload["media_type"] is None
@@ -138,7 +138,7 @@ def _build_message_payload(content: str) -> TelegramMessagePayload:
     return TelegramMessagePayload(
         message_id=412,
         chat_id=1001001001,
-        sender=TelegramSenderPayload(id="user-123", name="Casey"),
+        sender=TelegramSenderPayload(id="user-123", name="Fixture Sender"),
         timestamp=datetime(2026, 4, 21, 3, 54, 5, tzinfo=timezone.utc),
         content=content,
         raw_text=content,

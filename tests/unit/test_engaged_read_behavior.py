@@ -138,7 +138,7 @@ def test_codex_clarification_is_interrupted_by_newer_open_question_reply(tmp_pat
     state_store.remember_open_question(
         chat_id=1001001001,
         sender_id="user-123",
-        sender_name="Casey",
+        sender_name="Fixture Sender",
         app_server_id="codex-sandbox",
         task_id="task-1",
         tool_call_id="tool-1",
@@ -149,7 +149,7 @@ def test_codex_clarification_is_interrupted_by_newer_open_question_reply(tmp_pat
             OpenQuestionCandidate(
                 sender_id="user-123",
                 chat_id=1001001001,
-                display_name="Casey",
+                display_name="Fixture Sender",
             )
         ],
         created_at=utc_now(),
@@ -414,7 +414,7 @@ def _telegram_message(
     message_id: int,
     is_self: bool = False,
     sender_id: str = "user-123",
-    sender_name: str = "Casey",
+    sender_name: str = "Fixture Sender",
 ) -> TelegramMessagePayload:
     return TelegramMessagePayload(
         message_id=message_id,

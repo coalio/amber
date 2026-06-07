@@ -105,7 +105,7 @@ def test_attention_discards_messages_inside_ignore_window_and_marks_seen(tmp_pat
     state_store.remember_conversation_ignore(
         chat_id=1001001001,
         sender_id="user-123",
-        sender_name="Casey",
+        sender_name="Fixture Sender",
         created_at=now - timedelta(minutes=5),
         ignore_until=now + timedelta(minutes=30),
         reason="cooldown",
@@ -169,14 +169,14 @@ def test_disengage_clears_session_sets_ignore_and_writes_bad_memory(tmp_path) ->
         memory_store,
         "America/Managua",
     )
-    trigger_message = _context_message(412, "Casey", "user-123", "keep going then, say something back")
-    pending_message = _context_message(413, "Casey", "user-123", "yeah exactly, thats what I thought")
+    trigger_message = _context_message(412, "Fixture Sender", "user-123", "keep going then, say something back")
+    pending_message = _context_message(413, "Fixture Sender", "user-123", "yeah exactly, thats what I thought")
     session = ConversationSession(
         session_id="sess_disengage",
         chat_id=1001001001,
         last_updated_at=utc_now(),
         recent_messages=[trigger_message, pending_message],
-        participant_names={"user-123": "Casey"},
+        participant_names={"user-123": "Fixture Sender"},
         engaged_user_ids={"user-123"},
         latest_trigger_message_id=412,
         pending_surfaced_messages={413: pending_message},
@@ -200,29 +200,29 @@ def test_disengage_clears_session_sets_ignore_and_writes_bad_memory(tmp_path) ->
                 trigger_message_id=412,
                 session_id=session.session_id,
                 disengage_sender_id="user-123",
-                disengage_reason="Casey kept baiting a hostile argument.",
+                disengage_reason="Fixture Sender kept baiting a hostile argument.",
                 ignore_for_seconds=1800,
                 create_bad_memory=True,
                 bad_memory_sender_id="user-123",
-                bad_memory_text="Casey kept baiting hostile arguments and pushing for a reaction.",
+                bad_memory_text="Fixture Sender kept baiting hostile arguments and pushing for a reaction.",
             ),
         )
     )
 
     state = state_store.snapshot()
     rule = state.conversation_ignore_rules["1001001001:user-123"]
-    memories = memory_store._iter_memories("user-123", "Casey")
+    memories = memory_store._iter_memories("user-123", "Fixture Sender")
 
     assert context_layer._active_session is None
     assert state.active_chat_id is None
     assert state.active_session_id is None
     assert state.conversation_engaged_user_ids == []
     assert state.seen_through_by_chat == {"1001001001": 413}
-    assert rule.reason == "Casey kept baiting a hostile argument."
-    assert rule.sender_name == "Casey"
+    assert rule.reason == "Fixture Sender kept baiting a hostile argument."
+    assert rule.sender_name == "Fixture Sender"
     assert (rule.ignore_until - rule.created_at).total_seconds() == 1800
     assert [(item.chat_id, item.read_through_message_id) for item in transport.read_records] == [(1001001001, 413)]
-    assert memories[-1].text == "Casey kept baiting hostile arguments and pushing for a reaction."
+    assert memories[-1].text == "Fixture Sender kept baiting hostile arguments and pushing for a reaction."
     assert "negative_interaction" in memories[-1].tags
 
 
@@ -244,14 +244,14 @@ def test_disengage_writes_bad_memory_to_explicit_profile_owner(tmp_path) -> None
         memory_store,
         "America/Managua",
     )
-    trigger_message = _context_message(420, "Dee", "user-456", "lets just move on")
-    prior_offender_message = _context_message(419, "Casey", "user-123", "still pushing the same hostile bait")
+    trigger_message = _context_message(420, "Fixture Peer", "user-456", "lets just move on")
+    prior_offender_message = _context_message(419, "Fixture Sender", "user-123", "still pushing the same hostile bait")
     session = ConversationSession(
         session_id="sess_bad_memory_owner",
         chat_id=1001001001,
         last_updated_at=utc_now(),
         recent_messages=[prior_offender_message, trigger_message],
-        participant_names={"user-123": "Casey", "user-456": "Dee"},
+        participant_names={"user-123": "Fixture Sender", "user-456": "Fixture Peer"},
         engaged_user_ids={"user-123", "user-456"},
         latest_trigger_message_id=420,
     )
@@ -266,19 +266,19 @@ def test_disengage_writes_bad_memory_to_explicit_profile_owner(tmp_path) -> None
                 trigger_message_id=420,
                 session_id=session.session_id,
                 disengage_sender_id="user-456",
-                disengage_reason="Dee is not the problem, but this conversation is done.",
+                disengage_reason="Fixture Peer is not the problem, but this conversation is done.",
                 create_bad_memory=True,
                 bad_memory_sender_id="user-123",
-                bad_memory_text="Casey kept pushing hostile bait in the chat.",
+                bad_memory_text="Fixture Sender kept pushing hostile bait in the chat.",
             ),
         )
     )
 
-    casey_memories = memory_store._iter_memories("user-123", "Casey")
-    dee_memories = memory_store._iter_memories("user-456", "Dee")
+    primary_memories = memory_store._iter_memories("user-123", "Fixture Sender")
+    peer_memories = memory_store._iter_memories("user-456", "Fixture Peer")
 
-    assert casey_memories[-1].text == "Casey kept pushing hostile bait in the chat."
-    assert dee_memories == []
+    assert primary_memories[-1].text == "Fixture Sender kept pushing hostile bait in the chat."
+    assert peer_memories == []
 
 
 def _build_attention_layer(
@@ -311,7 +311,7 @@ def _telegram_received_event(
     payload = TelegramMessagePayload(
         message_id=message_id,
         chat_id=1001001001,
-        sender=TelegramSenderPayload(id="user-123", name="Casey"),
+        sender=TelegramSenderPayload(id="user-123", name="Fixture Sender"),
         timestamp=sent_at,
         content=content,
         raw_text=content,

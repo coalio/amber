@@ -70,7 +70,7 @@ def test_same_user_interrupt_pauses_batch_and_persists_remaining_plan(tmp_path, 
                 message_id=412,
                 reply_to_message_id=411,
                 reply_to_sender_id="user-123",
-                reply_to_sender_name="Casey",
+                reply_to_sender_name="Fixture Sender",
             )
         )
         interrupt_inserted["value"] = True
@@ -140,7 +140,7 @@ def test_messages_arriving_between_chunks_do_not_pause_batch(tmp_path, monkeypat
                 message_id=412,
                 reply_to_message_id=411,
                 reply_to_sender_id="user-123",
-                reply_to_sender_name="Casey",
+                reply_to_sender_name="Fixture Sender",
             )
         )
         delay_inserted["value"] = True
@@ -178,7 +178,7 @@ def _telegram_message(
     return TelegramMessagePayload(
         message_id=message_id,
         chat_id=1001001001,
-        sender=TelegramSenderPayload(id="user-123", name="Casey"),
+        sender=TelegramSenderPayload(id="user-123", name="Fixture Sender"),
         timestamp=datetime(2026, 4, 21, 7, 5 + (message_id - 411), 0, tzinfo=timezone.utc),
         content=content,
         raw_text=content,

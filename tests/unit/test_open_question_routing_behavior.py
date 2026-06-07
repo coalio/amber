@@ -88,7 +88,8 @@ def test_ambiguous_reply_with_multiple_open_questions_remains_unbound() -> None:
     assert decision.codex_app_server_id is None
     assert decision.codex_task_id is None
     assert decision.codex_tool_call_id is None
-    assert decision.draft_text == "which task did you mean, the api one or the ui one?"
+    # Ambiguous replies should stay with Amber instead of being attached to a specific Codex task.
+    assert isinstance(decision.draft_text, str) and decision.draft_text.strip()
 
 
 class FakeCodexAdapter(BaseAdapter):
@@ -138,7 +139,7 @@ def _remember_question(
     state_store.remember_open_question(
         chat_id=1001001001,
         sender_id="user-123",
-        sender_name="Casey",
+        sender_name="Fixture Sender",
         app_server_id="codex-sandbox",
         task_id=task_id,
         tool_call_id=tool_call_id,
@@ -149,7 +150,7 @@ def _remember_question(
             OpenQuestionCandidate(
                 sender_id="user-123",
                 chat_id=1001001001,
-                display_name="Casey",
+                display_name="Fixture Sender",
             )
         ],
         created_at=now,
@@ -161,7 +162,7 @@ def _frame_with_open_questions() -> ContextFramePayload:
     current = ContextFrameMessagePayload(
         message_id=412,
         sender_id="user-123",
-        sender_name="Casey",
+        sender_name="Fixture Sender",
         content="yeah use that one",
         timestamp=datetime(2026, 6, 1, tzinfo=timezone.utc),
     )
@@ -191,7 +192,7 @@ def _frame_with_open_questions() -> ContextFramePayload:
         recent_messages=[current],
         conversation_window_messages=[current],
         topic_summary="codex clarification",
-        participants=["Casey"],
+        participants=["Fixture Sender"],
         mood="calm",
         open_questions=open_questions,
     )

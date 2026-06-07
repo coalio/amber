@@ -1,0 +1,84 @@
+mode = "work"
+timezone = "America/Managua"
+
+[ai]
+provider = "openai"
+api_key = "none"
+model = "gpt-5.4"
+semantic_retry_budget = 3
+max_draft_chars = 1600
+max_output_tokens = 1200
+temperature = 0.3
+
+[telegram]
+api_id = "none"
+api_hash = "none"
+session_path = "{workspace}/telegram/telegram.session"
+
+[paths]
+memories_dir = "{workspace}/memories"
+runtime_state_path = "{workspace}/runtime-state/global_state.json"
+log_dir = "{workspace}/logs"
+
+[runtime]
+enable_real_delays = true
+disable_sleep_state = false
+
+[context]
+debounce_seconds = 5.0
+idle_timeout_seconds = "none"
+idle_timeout_min_seconds = 5.0
+idle_timeout_max_seconds = 15.0
+competing_chat_timeout_seconds = 15.0
+recent_message_budget = 8
+max_compacted_facts = 6
+initial_engagement_delay_min_seconds = 2.0
+initial_engagement_delay_max_seconds = 10.0
+conversation_window_before = 15
+conversation_window_after = 15
+
+[attention]
+surface_threshold = 0.48
+urgent_threshold = 0.72
+memory_limit = 3
+always_surface_telegram_ids = []
+
+[outbound]
+max_chunk_chars = 500
+
+[action]
+transport_max_retries = 1
+transport_retry_delay_seconds = 2.0
+typing_baseline_wpm = 135.0
+filler_pause_seconds = 5.0
+inter_chunk_delay_min_seconds = 0.5
+inter_chunk_delay_max_seconds = 1.0
+inter_chunk_delay_length_threshold_chars = 50
+inter_chunk_delay_chars_per_step = 5
+inter_chunk_delay_step_seconds = 0.5
+inter_chunk_delay_total_max_seconds = 5.0
+
+[codex]
+workdir = "{workspace}/codex/work"
+app_server_url = "http://127.0.0.1:8765"
+app_server_port = 8765
+podman_executable = "podman"
+podman_cgroup_manager = "none"
+enforce_resource_limits = true
+container_name = "amber-{workspace_name}-codex"
+app_server_command = "none"
+github_auth_dir = "{workspace}/codex/github-auth"
+home_dir = "{workspace}/codex/codex-home"
+model = "gpt-5.5"
+reasoning_effort = "xhigh"
+auto_update = true
+
+[linear]
+enabled = true
+api_key = "none"
+api_url = "https://api.linear.app/graphql"
+poll_seconds = 60.0
+due_window_days = 2
+status_in_progress = "In Progress"
+status_under_review = "Under Review"
+status_completed = "Done"

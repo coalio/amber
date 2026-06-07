@@ -1,0 +1,73 @@
+# Python caches and test artifacts
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+*.spec
+
+# Virtual environments
+venv/
+.venv/
+**/venv/
+**/.venv/
+
+# Local environment and tool metadata
+.env
+.env.*
+!.env.example
+.envrc
+.direnv/
+*.local
+*.local.*
+.claude/
+.openclaude/
+.codex
+.dev/
+
+# Local credentials and auth/session state
+*.session
+*.session-*
+*.session.*
+*.token
+*.secret
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+secrets/
+secrets.*
+
+# Runtime state, workspace data, and local outputs
+.trash/
+runtime_state/
+runtime-state/
+memories/
+test_outputs/
+.logs/
+logs/
+telegram/
+config.toml
+
+# Local exports and training data
+training/raw/
+training/analysis/
+training/datasets/
+training/review/
+training/artifacts/
+
+# Editor and OS noise
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

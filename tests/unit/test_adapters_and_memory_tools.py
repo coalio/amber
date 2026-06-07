@@ -1,0 +1,878 @@
+from __future__ import annotations
+
+import subprocess
+from datetime import timedelta
+from pathlib import Path
+from typing import Any
+
+from src.adapters.codex import app_server as codex_app_server
+from src.adapters.base import BaseAdapter
+from src.adapters.codex import CodexAdapter, CodexNotification, CodexPullRequestEvent, CodexQuestion, CodexTaskCompleted
+from src.adapters.linear import LinearAdapter
+from src.adapters.registry import AdapterRegistry
+from src.attention.memory.store import MemoryStore
+from src.events.bus import EventBus
+from src.events.codex import CodexNotificationReceivedEvent, CodexQuestionReceivedEvent
+from src.receiver.codex.receiver import CodexReceiver
+from src.state.models import OpenQuestionCandidate
+from src.state.store import GlobalStateStore
+from src.adapters.codex import CodexTaskLifecycleHandler
+from src.tools.registry import ToolRuntime, default_tool_registry
+from src.utils.time import utc_now
+
+
+def test_memory_tools_manage_expertise_and_read_profile(tmp_path: Path) -> None:
+    memory_store = MemoryStore(tmp_path / "memories")
+    session = default_tool_registry().new_session(runtime=ToolRuntime(memory_store=memory_store))
+    session.enable("ManageMemory")
+    session.enable("GetMemory")
+
+    manage_result = session.execute(
+        "ManageMemory",
+        {
+            "operation": "create_expertise",
+            "sender_id": "1001001001",
+            "display_name": "Coal",
+            "text": "Coal owns the Amber Blue Telegram integration.",
+            "tags": ["amber-blue", "telegram"],
+            "memory_id": None,
+            "expertise_tags": ["telegram-backend"],
+            "project_owner_tags": ["amber-blue"],
+        },
+    )
+    read_result = session.execute("GetMemory", {"sender_id": "1001001001", "query": "telegram", "limit": 5})
+
+    assert manage_result["profile"]["expertise_tags"] == ["telegram-backend"]
+    assert manage_result["profile"]["project_owner_tags"] == ["amber-blue"]
+    assert read_result["profile"]["display_name"] == "Coal"
+    assert read_result["profile"]["expertise_tags"] == ["telegram-backend"]
+    assert read_result["memories"][0]["text"] == "Coal owns the Amber Blue Telegram integration."
+
+
+def test_codex_receiver_surfaces_allowlisted_candidates_with_expertise(tmp_path: Path) -> None:
+    EventBus.reset_for_tests()
+    memory_store = MemoryStore(tmp_path / "memories")
+    memory_store.update_profile_tags(
+        "1001001001",
+        "Coal",
+        expertise_tags=["python", "telegram-backend"],
+        project_owner_tags=["amber-blue"],
+    )
+    adapter = CodexAdapter()
+    receiver = CodexReceiver(adapter, memory_store, ["1001001001"])
+    seen: list[CodexQuestionReceivedEvent] = []
+    EventBus.subscribe("CodexQuestionReceivedEvent", seen.append)
+
+    receiver.register()
+    adapter.emit_question_for_tests(
+        CodexQuestion(
+            app_server_id="codex-sandbox",
+            task_id="task_1",
+            tool_call_id="tool_1",
+            questions=["Which constraints matter?"],
+            task_description="Create a small Python script.",
+            context={"repo": "amber-blue"},
+        )
+    )
+
+    assert len(seen) == 1
+    candidate = seen[0].payload.candidate_people[0]
+    assert candidate.sender_id == "1001001001"
+    assert candidate.chat_id == 1001001001
+    assert candidate.display_name == "Coal"
+    assert candidate.expertise_tags == ["python", "telegram-backend"]
+    assert candidate.project_owner_tags == ["amber-blue"]
+
+
+def test_codex_adapter_skips_question_completed_in_same_event_batch() -> None:
+    adapter = CodexAdapter()
+    seen: list[CodexQuestion] = []
+    adapter.subscribe_questions(seen.append)
+
+    def fake_get_json(path: str, *, timeout: float = 30) -> dict[str, Any]:
+        adapter._poll_stop.set()
+        return {
+            "events": [
+                {
+                    "seq": 1,
+                    "type": "AmberAskUserQuestion",
+                    "app_server_id": "codex-sandbox",
+                    "task_id": "task_1",
+                    "tool_call_id": "tool_1",
+                    "questions": ["What should Codex do?"],
+                    "task_description": "Create a script.",
+                    "context": {},
+                },
+                {
+                    "seq": 2,
+                    "type": "CodexToolOutputReceived",
+                    "app_server_id": "codex-sandbox",
+                    "task_id": "task_1",
+                    "tool_call_id": "tool_1",
+                },
+            ]
+        }
+
+    adapter._get_json = fake_get_json
+
+    adapter._poll_events()
+
+    assert seen == []
+    assert adapter._last_event_seq == 2
+
+
+def test_codex_adapter_emits_user_notifications() -> None:
+    adapter = CodexAdapter()
+    seen: list[CodexNotification] = []
+    adapter.subscribe_notifications(seen.append)
+
+    def fake_get_json(path: str, *, timeout: float = 30) -> dict[str, Any]:
+        adapter._poll_stop.set()
+        return {
+            "events": [
+                {
+                    "seq": 1,
+                    "type": "AmberNotifyUser",
+                    "app_server_id": "codex-sandbox",
+                    "task_id": "task_1",
+                    "notification_id": "notify_1",
+                    "message": "The pull request is open.",
+                    "task_description": "Implement the task.",
+                    "context": {"pr": 12},
+                }
+            ]
+        }
+
+    adapter._get_json = fake_get_json
+
+    adapter._poll_events()
+
+    assert seen == [
+        CodexNotification(
+            app_server_id="codex-sandbox",
+            task_id="task_1",
+            notification_id="notify_1",
+            message="The pull request is open.",
+            task_description="Implement the task.",
+            context={"pr": 12},
+        )
+    ]
+
+
+def test_codex_adapter_emits_task_completion_events() -> None:
+    adapter = CodexAdapter()
+    seen: list[CodexTaskCompleted] = []
+    adapter.subscribe_task_completed(seen.append)
+
+    def fake_get_json(path: str, *, timeout: float = 30) -> dict[str, Any]:
+        adapter._poll_stop.set()
+        return {
+            "events": [
+                {
+                    "seq": 1,
+                    "type": "CodexTaskCompleted",
+                    "app_server_id": "codex-sandbox",
+                    "task_id": "task_1",
+                    "status": "completed",
+                    "task_description": "Implement LIN-1.",
+                    "context": {"linear_identifier": "LIN-1"},
+                }
+            ]
+        }
+
+    adapter._get_json = fake_get_json
+
+    adapter._poll_events()
+
+    assert seen == [
+        CodexTaskCompleted(
+            app_server_id="codex-sandbox",
+            task_id="task_1",
+            status="completed",
+            task_description="Implement LIN-1.",
+            context={"linear_identifier": "LIN-1"},
+        )
+    ]
+
+
+def test_codex_adapter_health_uses_runtime_signals() -> None:
+    adapter = CodexAdapter()
+    payload = {
+        "ok": True,
+        "runner": "codex-cli",
+        "yolo_mode": True,
+    }
+
+    adapter._get_json = lambda path, timeout=1: payload
+
+    assert adapter._app_server_is_healthy() is True
+
+
+def test_codex_adapter_decodes_pull_request_events() -> None:
+    adapter = CodexAdapter()
+    seen: list[CodexPullRequestEvent] = []
+    adapter.subscribe_pull_request_events(seen.append)
+
+    def fake_get_json(path: str, timeout: int = 10) -> dict[str, Any]:
+        adapter._poll_stop.set()
+        return {
+            "events": [
+                {
+                    "seq": 1,
+                    "type": "AmberReportPullRequest",
+                    "app_server_id": "codex-sandbox",
+                    "task_id": "task_1",
+                    "event_type": "opened",
+                    "pr_url": "https://github.com/acme/widgets/pull/12",
+                    "repository": "acme/widgets",
+                    "pr_number": 12,
+                    "branch": "feature/LIN-1-small-task",
+                    "title": "LIN-1 small task",
+                    "summary": "Opened the PR.",
+                    "task_description": "Implement LIN-1.",
+                    "context": {"linear_identifier": "LIN-1"},
+                }
+            ]
+        }
+
+    adapter._get_json = fake_get_json
+
+    adapter._poll_events()
+
+    assert seen == [
+        CodexPullRequestEvent(
+            app_server_id="codex-sandbox",
+            task_id="task_1",
+            event_type="opened",
+            pr_url="https://github.com/acme/widgets/pull/12",
+            repository="acme/widgets",
+            pr_number=12,
+            branch="feature/LIN-1-small-task",
+            title="LIN-1 small task",
+            summary="Opened the PR.",
+            task_description="Implement LIN-1.",
+            context={"linear_identifier": "LIN-1"},
+        )
+    ]
+
+
+def test_codex_start_task_includes_user_interaction_tools() -> None:
+    adapter = CodexAdapter()
+    captured: dict[str, Any] = {}
+    adapter.ensure_app_server = lambda: None
+    adapter._ensure_event_polling = lambda: None
+
+    def fake_post_json(path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        captured["path"] = path
+        captured["payload"] = payload
+        return {"app_server_id": "codex-sandbox", "task_id": "task_1", "status": "started"}
+
+    adapter._post_json = fake_post_json
+
+    task = adapter.start_task(task_description="Do the thing.", context={"project": "demo"})
+
+    assert task.task_id == "task_1"
+    assert captured["path"] == "/tasks"
+    assert [tool["name"] for tool in captured["payload"]["tools"]] == [
+        "AmberAskUserQuestion",
+        "AmberNotifyUser",
+        "AmberReportPullRequest",
+    ]
+
+
+def test_codex_task_lifecycle_handler_uses_pr_events_for_linear_status(tmp_path: Path) -> None:
+    EventBus.reset_for_tests()
+    state_store = GlobalStateStore(tmp_path / "state.json", "UTC")
+    state_store.sync_linear_queue(
+        [
+            {
+                "issue_id": "issue-a",
+                "identifier": "LIN-1",
+                "title": "Small task",
+                "due_date": "2026-06-01",
+                "status": "Planned",
+                "project": "Amber Blue",
+            }
+        ],
+        seen_at=utc_now(),
+    )
+    codex_adapter = CodexAdapter()
+    linear_client = FakeLinearMutationClient()
+    linear_adapter = LinearAdapter(api_key=None, client=linear_client)
+    handler = CodexTaskLifecycleHandler(
+        codex_adapter,
+        adapter_registry=AdapterRegistry([linear_adapter]),
+        state_store=state_store,
+    )
+    state_store.mark_linear_task_started(
+        issue_id="issue-a",
+        codex_app_server_id="codex-sandbox",
+        codex_task_id="task_1",
+        codex_thread_id="thread_1",
+        codex_turn_id="turn_1",
+        started_at=utc_now(),
+    )
+
+    handler.register()
+    codex_adapter.emit_task_completed_for_tests(
+        CodexTaskCompleted(
+            app_server_id="codex-sandbox",
+            task_id="task_1",
+            status="completed",
+            task_description="Implement LIN-1.",
+            context={},
+            thread_id="thread_1",
+            turn_id="turn_2",
+        )
+    )
+    task = state_store.snapshot().linear_tasks["issue-a"]
+    assert task.queue_status == "codex_running"
+    assert task.codex_turn_id == "turn_2"
+    assert linear_client.status_updates == []
+
+    codex_adapter.emit_pull_request_event_for_tests(
+        CodexPullRequestEvent(
+            app_server_id="codex-sandbox",
+            task_id="task_1",
+            event_type="opened",
+            pr_url="https://github.com/acme/widgets/pull/12",
+            repository="acme/widgets",
+            pr_number=12,
+            branch="feature/LIN-1-small-task",
+            title="LIN-1 small task",
+            summary="Opened the implementation PR.",
+        )
+    )
+    task = state_store.snapshot().linear_tasks["issue-a"]
+    assert task.queue_status == "under_review"
+    assert task.pr_url == "https://github.com/acme/widgets/pull/12"
+    assert task.pr_number == 12
+
+    wake_events = []
+    EventBus.subscribe("LinearQueueWakeRequestedEvent", wake_events.append)
+    codex_adapter.emit_pull_request_event_for_tests(
+        CodexPullRequestEvent(
+            app_server_id="codex-sandbox",
+            task_id="task_1",
+            event_type="merged",
+            pr_url="https://github.com/acme/widgets/pull/12",
+            repository="acme/widgets",
+            pr_number=12,
+            branch="feature/LIN-1-small-task",
+            title="LIN-1 small task",
+            summary="Merged the implementation PR.",
+        )
+    )
+
+    assert linear_client.status_updates == [("issue-a", "Under Review"), ("issue-a", "Done")]
+    assert state_store.snapshot().linear_tasks["issue-a"].queue_status == "completed"
+    assert wake_events[-1].payload.reason == "linear_pr_merged"
+
+
+def test_codex_adapter_updates_codex_cli_once() -> None:
+    calls: list[list[str]] = []
+
+    def command_runner(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    adapter = CodexAdapter(command_runner=command_runner, auto_update=True)
+
+    adapter._ensure_codex_updated()
+    adapter._ensure_codex_updated()
+
+    update_calls = [call for call in calls if call[-2:] == ["-lc", 'mkdir -p "$CODEX_HOME" "$npm_config_cache" && codex update']]
+    assert len(update_calls) == 1
+    assert update_calls[0][:4] == ["podman", "exec", "--user", "root"]
+
+
+def test_codex_rules_skill_is_optional_for_read_only_tasks() -> None:
+    adapter = CodexAdapter()
+
+    assert adapter._requires_codex_rules("Explain this repository without making changes.", {}) is False
+    assert adapter._requires_codex_rules("Implement a small parser.", {}) is True
+    assert adapter._requires_codex_rules("Inspect this bug report.", {"requires_code_editing": True}) is True
+    assert adapter._requires_codex_rules("Build the thing.", {"requires_code_editing": False}) is False
+
+
+class FakeCodexAdapter(BaseAdapter):
+    name = "codex"
+
+    def __init__(self) -> None:
+        self.outputs: list[dict[str, Any]] = []
+
+    def submit_tool_output(
+        self,
+        *,
+        app_server_id: str,
+        task_id: str,
+        tool_call_id: str,
+        output: dict[str, Any],
+    ) -> dict[str, Any]:
+        self.outputs.append(
+            {
+                "app_server_id": app_server_id,
+                "task_id": task_id,
+                "tool_call_id": tool_call_id,
+                "output": output,
+            }
+        )
+        return {"status": "accepted"}
+
+
+class FakeLinearMutationClient:
+    def __init__(self) -> None:
+        self.status_updates: list[tuple[str, str]] = []
+
+    def update_issue_status(self, *, issue_id: str, status_name: str) -> dict[str, Any]:
+        self.status_updates.append((issue_id, status_name))
+        return {
+            "success": True,
+            "issue": {
+                "id": issue_id,
+                "identifier": "LIN-1",
+                "url": "https://linear.app/test/issue/LIN-1",
+                "state": {"name": status_name},
+            },
+        }
+
+
+def test_codex_send_reply_submits_output_and_clears_open_question(tmp_path: Path) -> None:
+    state_store = GlobalStateStore(tmp_path / "state.json", "UTC")
+    now = utc_now()
+    state_store.remember_open_question(
+        chat_id="1001001001",
+        sender_id="1001001001",
+        sender_name="Coal",
+        app_server_id="codex-sandbox",
+        task_id="task_1",
+        tool_call_id="tool_1",
+        questions=["Which constraints matter?"],
+        task_description="Create a small Python script.",
+        context={},
+        candidate_people=[
+            OpenQuestionCandidate(
+                sender_id="1001001001",
+                chat_id="1001001001",
+                display_name="Coal",
+                expertise_tags=["python"],
+                project_owner_tags=[],
+            )
+        ],
+        created_at=now,
+        expires_at=now + timedelta(minutes=15),
+    )
+    adapter = FakeCodexAdapter()
+    session = default_tool_registry().new_session(
+        runtime=ToolRuntime(adapter_registry=AdapterRegistry([adapter]), state_store=state_store)
+    )
+    session.enable("CodexSendReply")
+
+    result = session.execute(
+        "CodexSendReply",
+        {
+            "app_server_id": "codex-sandbox",
+            "task_id": "task_1",
+            "tool_call_id": "tool_1",
+            "answers": ["Use argparse and print the supplied message."],
+            "summary": "Build a tiny argparse echo script.",
+            "confidence": 0.9,
+        },
+    )
+
+    assert result["submitted"] is True
+    assert result["cleared_open_question"] is True
+    assert state_store.snapshot().open_questions == {}
+    assert adapter.outputs[0]["output"]["summary"] == "Build a tiny argparse echo script."
+
+
+def test_codex_app_server_does_not_replay_completed_question_events() -> None:
+    codex_app_server.TASKS.clear()
+    codex_app_server.EVENTS.clear()
+    codex_app_server.TASKS["task_1"] = {"status": "waiting_for_clarification"}
+    codex_app_server._append_event(
+        {
+            "type": "AmberAskUserQuestion",
+            "task_id": "task_1",
+            "tool_call_id": "tool_1",
+        }
+    )
+
+    assert [event["type"] for event in codex_app_server._events_after(0)] == ["AmberAskUserQuestion"]
+
+    codex_app_server.TASKS["task_1"]["status"] = "clarification_received"
+    codex_app_server._append_event(
+        {
+            "type": "CodexToolOutputReceived",
+            "task_id": "task_1",
+            "tool_call_id": "tool_1",
+        }
+    )
+
+    assert [event["type"] for event in codex_app_server._events_after(0)] == ["CodexToolOutputReceived"]
+
+
+def test_codex_app_server_clarification_policy_discourages_trivial_questions() -> None:
+    policy = codex_app_server.CLARIFICATION_POLICY
+
+    assert "filenames" in policy["do_not_ask_for"]
+    assert "minor output formatting" in policy["do_not_ask_for"]
+    assert "Ask one meaningful question at a time" in policy["style"]
+
+
+def test_codex_app_server_notify_user_event() -> None:
+    codex_app_server.TASKS.clear()
+    codex_app_server.EVENTS.clear()
+    codex_app_server.TASKS["task_1"] = {
+        "status": "waiting_for_clarification",
+        "task_description": "Open a pull request.",
+        "notifications": [],
+    }
+    original_next_id = codex_app_server._next_id
+    notification_id = "amber_notify_test"
+    codex_app_server._next_id = lambda prefix: notification_id
+
+    class FakeHandler:
+        status: int | None = None
+        body = b""
+        headers: list[tuple[str, str]] = []
+
+        def send_response(self, status: int) -> None:
+            self.status = status
+
+        def send_header(self, key: str, value: str) -> None:
+            self.headers.append((key, value))
+
+        def end_headers(self) -> None:
+            return
+
+        @property
+        def wfile(self):
+            class Writer:
+                def __init__(self, outer):
+                    self._outer = outer
+
+                def write(self, body: bytes) -> None:
+                    self._outer.body = body
+
+            return Writer(self)
+
+    handler = FakeHandler()
+
+    try:
+        codex_app_server.Handler._receive_notification(
+            handler,
+            "task_1",
+            {"message": "The pull request is open.", "context": {"pr": 12}},
+        )
+    finally:
+        codex_app_server._next_id = original_next_id
+
+    assert handler.status == 200
+    assert codex_app_server.EVENTS[-1]["type"] == "AmberNotifyUser"
+    assert codex_app_server.EVENTS[-1]["message"] == "The pull request is open."
+
+
+def test_codex_app_server_completion_forwards_captured_assistant_text() -> None:
+    codex_app_server.TASKS.clear()
+    codex_app_server.EVENTS.clear()
+    task_id = "task_1"
+    codex_app_server.TASKS[task_id] = {
+        "status": "running",
+        "task_description": "Create a script.",
+        "context": {},
+        "notifications": [],
+    }
+    runner = codex_app_server.CodexTaskRunner(
+        task_id,
+        {"task_description": "Create a script.", "context": {}},
+    )
+
+    runner._on_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "item": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Created /work/echo.py and tests pass."}],
+                }
+            },
+        }
+    )
+    runner._on_notification({"method": "turn/completed", "params": {"turn": {"status": "completed"}}})
+
+    assert [event["type"] for event in codex_app_server.EVENTS] == ["AmberNotifyUser", "CodexTaskCompleted"]
+    notification = codex_app_server.EVENTS[0]
+    assert notification["message"] == "Created /work/echo.py and tests pass."
+    assert notification["context"]["guardrail"] == "terminal_user_facing_event"
+    assert notification["context"]["source"] == "captured_assistant_message"
+
+
+def test_codex_app_server_completion_without_terminal_tool_emits_guard_notification() -> None:
+    codex_app_server.TASKS.clear()
+    codex_app_server.EVENTS.clear()
+    task_id = "task_1"
+    codex_app_server.TASKS[task_id] = {
+        "status": "running",
+        "task_description": "Implement a feature.",
+        "context": {},
+        "notifications": [],
+    }
+    runner = codex_app_server.CodexTaskRunner(
+        task_id,
+        {"task_description": "Implement a feature.", "context": {}},
+    )
+
+    runner._on_notification({"method": "turn/completed", "params": {"turn": {"status": "completed"}}})
+
+    assert [event["type"] for event in codex_app_server.EVENTS] == ["AmberNotifyUser", "CodexTaskCompleted"]
+    notification = codex_app_server.EVENTS[0]
+    assert "Codex finished without calling AmberNotifyUser or AmberAskUserQuestion" in notification["message"]
+    assert notification["context"]["source"] == "missing_terminal_tool"
+
+
+def test_codex_app_server_completion_after_explicit_notify_does_not_duplicate_notification() -> None:
+    codex_app_server.TASKS.clear()
+    codex_app_server.EVENTS.clear()
+    task_id = "task_1"
+    codex_app_server.TASKS[task_id] = {
+        "status": "running",
+        "task_description": "Open a pull request.",
+        "context": {},
+        "notifications": [],
+    }
+    runner = codex_app_server.CodexTaskRunner(
+        task_id,
+        {"task_description": "Open a pull request.", "context": {}},
+    )
+
+    runner._notify_user(7, {"message": "The pull request is open."})
+    runner._on_notification({"method": "turn/completed", "params": {"turn": {"status": "completed"}}})
+
+    assert [event["type"] for event in codex_app_server.EVENTS] == ["AmberNotifyUser", "CodexTaskCompleted"]
+    assert codex_app_server.EVENTS[0]["message"] == "The pull request is open."
+    assert "guardrail" not in codex_app_server.EVENTS[0]["context"]
+
+
+def test_codex_app_server_completion_forwards_assistant_text_after_notify() -> None:
+    codex_app_server.TASKS.clear()
+    codex_app_server.EVENTS.clear()
+    task_id = "task_1"
+    codex_app_server.TASKS[task_id] = {
+        "status": "running",
+        "task_description": "Open a pull request.",
+        "context": {},
+        "notifications": [],
+    }
+    runner = codex_app_server.CodexTaskRunner(
+        task_id,
+        {"task_description": "Open a pull request.", "context": {}},
+    )
+
+    runner._notify_user(7, {"message": "The pull request is open."})
+    runner._on_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "item": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Additional final detail."}],
+                }
+            },
+        }
+    )
+    runner._on_notification({"method": "turn/completed", "params": {"turn": {"status": "completed"}}})
+
+    assert [event["type"] for event in codex_app_server.EVENTS] == [
+        "AmberNotifyUser",
+        "AmberNotifyUser",
+        "CodexTaskCompleted",
+    ]
+    assert codex_app_server.EVENTS[1]["message"] == "Additional final detail."
+    assert codex_app_server.EVENTS[1]["context"]["source"] == "captured_assistant_message"
+
+
+def test_codex_app_server_dynamic_tool_emits_question_and_receives_output() -> None:
+    codex_app_server.TASKS.clear()
+    codex_app_server.EVENTS.clear()
+    task_id = "task_1"
+    codex_app_server.TASKS[task_id] = {
+        "status": "running",
+        "task_description": "Implement a parser.",
+        "tool_outputs": [],
+        "notifications": [],
+    }
+
+    class FakeClient:
+        responses: list[dict[str, Any]]
+
+        def __init__(self) -> None:
+            self.responses = []
+
+        def respond(self, request_id: int, result: dict[str, Any] | None = None, error: dict[str, Any] | None = None) -> None:
+            self.responses.append({"request_id": request_id, "result": result, "error": error})
+
+    runner = codex_app_server.CodexTaskRunner(
+        task_id,
+        {"task_description": "Implement a parser.", "context": {"project": "demo"}},
+    )
+    fake_client = FakeClient()
+    runner.client = fake_client
+
+    runner._handle_dynamic_tool_call(
+        7,
+        {
+            "tool": "AmberAskUserQuestion",
+            "itemId": "tool_1",
+            "arguments": {"questions": ["Which grammar should this parser support?"]},
+        },
+    )
+
+    assert codex_app_server.TASKS[task_id]["status"] == "waiting_for_clarification"
+    assert codex_app_server.EVENTS[-1]["type"] == "AmberAskUserQuestion"
+    assert codex_app_server.EVENTS[-1]["tool_call_id"] == "tool_1"
+    assert codex_app_server.EVENTS[-1]["questions"] == ["Which grammar should this parser support?"]
+
+    submitted = runner.submit_tool_output(
+        "tool_1",
+        {
+            "answers": ["Only arithmetic expressions."],
+            "summary": "Use arithmetic expressions.",
+            "confidence": 1,
+        },
+    )
+
+    assert submitted is True
+    assert fake_client.responses[0]["request_id"] == 7
+    assert fake_client.responses[0]["result"]["success"] is True
+    assert "Only arithmetic expressions" in fake_client.responses[0]["result"]["contentItems"][0]["text"]
+    assert codex_app_server.EVENTS[-1]["type"] == "CodexToolOutputReceived"
+
+
+def test_codex_app_server_dynamic_tool_reports_pull_request_event() -> None:
+    codex_app_server.TASKS.clear()
+    codex_app_server.EVENTS.clear()
+    task_id = "task_1"
+    codex_app_server.TASKS[task_id] = {
+        "status": "running",
+        "task_description": "Implement LIN-1.",
+        "context": {"linear_identifier": "LIN-1"},
+        "tool_outputs": [],
+        "notifications": [],
+    }
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.responses: list[dict[str, Any]] = []
+
+        def respond(self, request_id: int, result: dict[str, Any] | None = None, error: dict[str, Any] | None = None) -> None:
+            self.responses.append({"request_id": request_id, "result": result, "error": error})
+
+    runner = codex_app_server.CodexTaskRunner(
+        task_id,
+        {"task_description": "Implement LIN-1.", "context": {"linear_identifier": "LIN-1"}},
+    )
+    fake_client = FakeClient()
+    runner.client = fake_client
+
+    runner._handle_dynamic_tool_call(
+        9,
+        {
+            "tool": "AmberReportPullRequest",
+            "itemId": "tool_pr",
+            "arguments": {
+                "event_type": "opened",
+                "pr_url": "https://github.com/acme/widgets/pull/12",
+                "repository": "acme/widgets",
+                "pr_number": 12,
+                "branch": "feature/LIN-1-small-task",
+                "title": "LIN-1 small task",
+                "summary": "Opened the implementation PR.",
+            },
+        },
+    )
+
+    assert fake_client.responses[0]["request_id"] == 9
+    assert fake_client.responses[0]["result"]["success"] is True
+    assert codex_app_server.EVENTS[-1]["type"] == "AmberReportPullRequest"
+    assert codex_app_server.EVENTS[-1]["event_type"] == "opened"
+    assert codex_app_server.EVENTS[-1]["pr_url"] == "https://github.com/acme/widgets/pull/12"
+    assert codex_app_server.TASKS[task_id]["pr_status"] == "opened"
+
+
+def test_codex_app_server_turn_input_injects_rules_skill_only_when_requested() -> None:
+    editing_runner = codex_app_server.CodexTaskRunner(
+        "task_edit",
+        {
+            "task_description": "Implement a feature.",
+            "context": {},
+            "codex_rules_skill": {
+                "name": "CodexRules",
+                "path": "/codex-home/.codex/skills/CodexRules/SKILL.md",
+                "use_for_task": True,
+            },
+        },
+    )
+    readonly_runner = codex_app_server.CodexTaskRunner(
+        "task_read",
+        {
+            "task_description": "Explain the repo.",
+            "context": {},
+            "codex_rules_skill": {
+                "name": "CodexRules",
+                "path": "/codex-home/.codex/skills/CodexRules/SKILL.md",
+                "use_for_task": False,
+            },
+        },
+    )
+
+    editing_input = editing_runner._turn_input()
+    readonly_input = readonly_runner._turn_input()
+
+    assert editing_input[0]["text"].startswith("$CodexRules ")
+    assert editing_input[1] == {
+        "type": "skill",
+        "name": "CodexRules",
+        "path": "/codex-home/.codex/skills/CodexRules/SKILL.md",
+    }
+    assert len(readonly_input) == 1
+    assert not readonly_input[0]["text"].startswith("$CodexRules ")
+
+
+def test_codex_app_server_starts_real_codex_in_yolo_mode() -> None:
+    codex_app_server.TASKS.clear()
+    codex_app_server.TASKS["task_1"] = {"status": "starting"}
+    runner = codex_app_server.CodexTaskRunner(
+        "task_1",
+        {"task_description": "Implement the feature.", "context": {}},
+    )
+    captured_requests: list[tuple[str, dict[str, Any]]] = []
+
+    class FakeClient:
+        def request(self, method: str, params: dict[str, Any] | None = None, *, timeout: float = 120) -> dict[str, Any]:
+            captured_requests.append((method, params or {}))
+            if method == "thread/start":
+                return {"thread": {"id": "thread_1"}}
+            if method == "turn/start":
+                return {"turn": {"id": "turn_1"}}
+            return {}
+
+    runner.client = FakeClient()
+
+    assert runner._codex_command() == [
+        "codex",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "app-server",
+    ]
+
+    runner._start_thread()
+    runner._start_turn()
+
+    thread_params = captured_requests[0][1]
+    turn_params = captured_requests[1][1]
+    assert thread_params["approvalPolicy"] == "never"
+    assert thread_params["sandbox"] == "danger-full-access"
+    assert turn_params["approvalPolicy"] == "never"
+    assert turn_params["sandboxPolicy"] == {"type": "dangerFullAccess"}

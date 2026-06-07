@@ -196,7 +196,7 @@ def test_codex_run_task_records_selected_linear_task(tmp_path) -> None:
                 "title": "Small task",
                 "due_date": local_now(timezone_name).date().isoformat(),
                 "status": "Planned",
-                "project": "Amber Blue",
+                "project": "Amber",
             }
         ],
         seen_at=utc_now(),
@@ -258,12 +258,12 @@ def test_codex_run_task_uses_linear_project_as_project_context(tmp_path) -> None
                 "feature_label": "LIN-1-small-task",
                 "requires_code_editing": True,
                 "notes": None,
-                "linear_project": "Amber Blue",
+                "linear_project": "Amber",
             },
         },
     )
 
-    assert codex_adapter.started_tasks[0]["context"]["project"] == "Amber Blue"
+    assert codex_adapter.started_tasks[0]["context"]["project"] == "Amber"
 
 
 def test_codex_run_task_resumes_stored_linear_thread_for_review_followup(tmp_path) -> None:
@@ -277,7 +277,7 @@ def test_codex_run_task_resumes_stored_linear_thread_for_review_followup(tmp_pat
                 "title": "Small task",
                 "due_date": local_now(timezone_name).date().isoformat(),
                 "status": "Planned",
-                "project": "Amber Blue",
+                "project": "Amber",
             }
         ],
         seen_at=utc_now(),
@@ -306,7 +306,7 @@ def test_codex_run_task_resumes_stored_linear_thread_for_review_followup(tmp_pat
             "context": {
                 "linear_issue_id": "issue-a",
                 "linear_identifier": "LIN-1",
-                "linear_project": "Amber Blue",
+                "linear_project": "Amber",
                 "requires_code_editing": True,
             },
         },
@@ -334,7 +334,7 @@ def test_codex_question_marks_linear_task_waiting_and_keeps_linear_in_progress(t
                 "title": "Small task",
                 "due_date": local_now(timezone_name).date().isoformat(),
                 "status": "Planned",
-                "project": "Amber Blue",
+                "project": "Amber",
             }
         ],
         seen_at=utc_now(),
@@ -463,7 +463,7 @@ def _issue(
     state_type: str = "unstarted",
     state_name: str = "Planned",
     priority: int | None = 0,
-    project: str | None = "Amber Blue",
+    project: str | None = "Amber",
 ) -> LinearIssue:
     return LinearIssue(
         id=issue_id,

@@ -31,17 +31,17 @@ DEFAULT_TASK = (
 
 
 def _configure_work_mode(*, resume_open_question: bool = False) -> None:
-    os.environ["AMBER_BLUE_MODE"] = "work"
-    os.environ.setdefault("AMBER_BLUE_ENABLE_REAL_DELAYS", "0")
-    os.environ.setdefault("AMBER_BLUE_DISABLE_SLEEP_STATE", "1")
-    os.environ.setdefault("AMBER_BLUE_CONTEXT_DEBOUNCE_SECONDS", "2")
-    os.environ.setdefault("AMBER_BLUE_CONTEXT_INITIAL_ENGAGEMENT_DELAY_MIN_SECONDS", "0")
-    os.environ.setdefault("AMBER_BLUE_CONTEXT_INITIAL_ENGAGEMENT_DELAY_MAX_SECONDS", "0")
-    if "AMBER_BLUE_CODEX_APP_SERVER_PORT" not in os.environ and "AMBER_BLUE_CODEX_APP_SERVER_URL" not in os.environ:
+    os.environ["AMBER_MODE"] = "work"
+    os.environ.setdefault("AMBER_ENABLE_REAL_DELAYS", "0")
+    os.environ.setdefault("AMBER_DISABLE_SLEEP_STATE", "1")
+    os.environ.setdefault("AMBER_CONTEXT_DEBOUNCE_SECONDS", "2")
+    os.environ.setdefault("AMBER_CONTEXT_INITIAL_ENGAGEMENT_DELAY_MIN_SECONDS", "0")
+    os.environ.setdefault("AMBER_CONTEXT_INITIAL_ENGAGEMENT_DELAY_MAX_SECONDS", "0")
+    if "AMBER_CODEX_APP_SERVER_PORT" not in os.environ and "AMBER_CODEX_APP_SERVER_URL" not in os.environ:
         port = _existing_codex_port() if resume_open_question else None
         port = port or _free_local_port()
-        os.environ["AMBER_BLUE_CODEX_APP_SERVER_PORT"] = str(port)
-        os.environ["AMBER_BLUE_CODEX_APP_SERVER_URL"] = f"http://127.0.0.1:{port}"
+        os.environ["AMBER_CODEX_APP_SERVER_PORT"] = str(port)
+        os.environ["AMBER_CODEX_APP_SERVER_URL"] = f"http://127.0.0.1:{port}"
     get_settings.cache_clear()
 
 
@@ -52,7 +52,7 @@ def _free_local_port() -> int:
 
 
 def _existing_codex_port() -> int | None:
-    cgroup_manager = os.environ.get("AMBER_BLUE_CODEX_CGROUP_MANAGER", "cgroupfs")
+    cgroup_manager = os.environ.get("AMBER_CODEX_CGROUP_MANAGER", "cgroupfs")
     command = ["podman"]
     if cgroup_manager:
         command.append(f"--cgroup-manager={cgroup_manager}")
@@ -94,7 +94,7 @@ async def run_live_codex_work_smoke(
     _configure_work_mode(resume_open_question=resume_open_question)
     settings = get_settings()
     if settings.mode != "work":
-        raise RuntimeError("Live Codex smoke must run with AMBER_BLUE_MODE=work.")
+        raise RuntimeError("Live Codex smoke must run with AMBER_MODE=work.")
     if not settings.telegram_api_id or not settings.telegram_api_hash:
         raise RuntimeError("Missing Telegram API credentials.")
     if not settings.ai_api_key:

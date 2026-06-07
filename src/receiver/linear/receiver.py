@@ -35,7 +35,7 @@ class LinearReceiver:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._wake_subscription_id: str | None = None
-        self._logger = get_logger("amber_blue.receiver.linear")
+        self._logger = get_logger("amber.receiver.linear")
 
     def register(self) -> None:
         if self._wake_subscription_id is None:

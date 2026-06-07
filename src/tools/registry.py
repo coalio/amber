@@ -92,7 +92,7 @@ class ToolSession:
         return definitions
 
     def execute(self, name: str, arguments: dict[str, Any]) -> Any:
-        logger = get_logger("amber_blue.tools")
+        logger = get_logger("amber.tools")
         if name not in self._enabled_tool_names:
             result = {"error": f"Tool is not enabled: {name}"}
             self._record_execution(name, arguments, result)

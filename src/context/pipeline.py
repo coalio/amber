@@ -47,7 +47,7 @@ from src.utils.time import utc_now
 
 
 class ContextLayer:
-    _logger = get_logger("amber_blue.context")
+    _logger = get_logger("amber.context")
 
     def __init__(
         self,

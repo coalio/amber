@@ -24,7 +24,7 @@ class EventBus:
     _queue: deque[BaseEvent] = deque()
     _lock = Lock()
     _dispatching = False
-    _logger = get_logger("amber_blue.event_bus")
+    _logger = get_logger("amber.event_bus")
 
     @classmethod
     def _dispatch(cls, event: BaseEvent) -> None:

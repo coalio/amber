@@ -30,7 +30,7 @@ class LinearAdapter(BaseAdapter):
 
     def preflight(self) -> None:
         if not self._api_key and self._client is None:
-            raise RuntimeError("Linear adapter requires AMBER_BLUE_LINEAR_API_KEY.")
+            raise RuntimeError("Linear adapter requires AMBER_LINEAR_API_KEY.")
 
     def set_task_status(self, *, issue_id: str, status: str, note: str | None = None) -> dict[str, Any]:
         self.preflight()
@@ -55,6 +55,6 @@ class LinearAdapter(BaseAdapter):
         if self._client is not None:
             return self._client
         if not self._api_key:
-            raise RuntimeError("Linear adapter requires AMBER_BLUE_LINEAR_API_KEY.")
+            raise RuntimeError("Linear adapter requires AMBER_LINEAR_API_KEY.")
         self._client = LinearGraphQLClient(api_key=self._api_key, api_url=self._api_url)
         return self._client

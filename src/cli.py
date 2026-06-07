@@ -136,16 +136,16 @@ def _configure_workspace(workspace: str | Path) -> int:
     _ensure_section(data, "codex")
 
     print(f"Configuring Amber workspace: {resolved}")
-    data["ai"]["api_key"] = _prompt_required_secret("AI/OpenAI API key", "AMBER_BLUE_AI_API_KEY", data["ai"].get("api_key"))
-    data["ai"]["model"] = _prompt_required("AI model", "AMBER_BLUE_AI_MODEL", data["ai"].get("model"))
+    data["ai"]["api_key"] = _prompt_required_secret("AI/OpenAI API key", "AMBER_AI_API_KEY", data["ai"].get("api_key"))
+    data["ai"]["model"] = _prompt_required("AI model", "AMBER_AI_MODEL", data["ai"].get("model"))
     data["telegram"]["api_id"] = _prompt_required("Telegram API ID", "API_ID", data["telegram"].get("api_id"))
     data["telegram"]["api_hash"] = _prompt_required_secret("Telegram API hash", "API_HASH", data["telegram"].get("api_hash"))
-    data["linear"]["api_key"] = _prompt_required_secret("Linear API key", "AMBER_BLUE_LINEAR_API_KEY", data["linear"].get("api_key"))
-    data["linear"]["api_url"] = _prompt_required("Linear API URL", "AMBER_BLUE_LINEAR_API_URL", data["linear"].get("api_url"))
-    data["codex"]["model"] = _prompt_required("Codex model", "AMBER_BLUE_CODEX_MODEL", data["codex"].get("model"))
+    data["linear"]["api_key"] = _prompt_required_secret("Linear API key", "AMBER_LINEAR_API_KEY", data["linear"].get("api_key"))
+    data["linear"]["api_url"] = _prompt_required("Linear API URL", "AMBER_LINEAR_API_URL", data["linear"].get("api_url"))
+    data["codex"]["model"] = _prompt_required("Codex model", "AMBER_CODEX_MODEL", data["codex"].get("model"))
     data["codex"]["reasoning_effort"] = _prompt_required(
         "Codex reasoning effort",
-        "AMBER_BLUE_CODEX_REASONING_EFFORT",
+        "AMBER_CODEX_REASONING_EFFORT",
         data["codex"].get("reasoning_effort"),
     )
     config_path.write_text(render_toml(data), encoding="utf-8")

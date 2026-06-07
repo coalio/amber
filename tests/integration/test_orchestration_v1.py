@@ -155,6 +155,8 @@ def load_candidate_segments() -> list[DatasetSegment]:
     segments: list[DatasetSegment] = []
     seen_sample_ids: set[str] = set()
     for path in RANDOM_SEGMENT_PATHS:
+        if not path.exists():
+            continue
         for row in load_jsonl(path):
             sample_id = row.get("sample_id")
             if not sample_id or sample_id in seen_sample_ids:
@@ -203,7 +205,7 @@ def build_test_settings(tmp_path: Path):
 
 def ensure_live_openai_settings(settings) -> None:
     if not settings.ai_api_key:
-        pytest.skip("Real OpenAI integration requires AMBER_BLUE_AI_API_KEY.")
+        pytest.skip("Real OpenAI integration requires AMBER_AI_API_KEY.")
     if settings.ai_provider.lower() != "openai":
         pytest.skip("This integration batch expects the OpenAI AI provider.")
 
@@ -506,8 +508,9 @@ def choose_next_segment(
 @pytest.mark.integration
 def test_orchestration_v1_live_random_batch(tmp_path: Path) -> None:
     candidate_segments = load_candidate_segments()
-    assert candidate_segments, "expected at least one candidate segment fixture"
-    seed = int(os.getenv("AMBER_BLUE_TEST_SEED", str(int(time.time()))))
+    if not candidate_segments:
+        pytest.skip("Local orchestration datasets are not present.")
+    seed = int(os.getenv("AMBER_TEST_SEED", str(int(time.time()))))
     rng = random.Random(seed)
     remaining = list(candidate_segments)
     rng.shuffle(remaining)

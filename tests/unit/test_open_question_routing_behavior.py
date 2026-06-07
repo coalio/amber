@@ -144,7 +144,7 @@ def _remember_question(
         tool_call_id=tool_call_id,
         questions=[question],
         task_description=f"Implement {task_id}.",
-        context={"linear_project": "Amber Blue", "linear_identifier": task_id.upper()},
+        context={"linear_project": "Amber", "linear_identifier": task_id.upper()},
         candidate_people=[
             OpenQuestionCandidate(
                 sender_id="user-123",

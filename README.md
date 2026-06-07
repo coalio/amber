@@ -1,6 +1,6 @@
-# Amber Blue
+# Amber
 
-Amber Blue is a personal Telegram agent that can live in your chats, decide when a message is worth attention, and reply with your configured style. In work mode, it can also coordinate Codex and Linear work from the same Telegram surface.
+Amber is a personal Telegram agent that can live in your chats, decide when a message is worth attention, and reply with your configured style. In work mode, it can also coordinate Codex and Linear work from the same Telegram surface.
 
 The normal path is:
 
@@ -27,7 +27,7 @@ The installer can set up the workspace and prompt for credentials, but it cannot
 Run the installer with the workspace name you want to create:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/coalio/amber-blue/master/installer/install.sh | bash -s -- my-workspace
+curl -fsSL https://raw.githubusercontent.com/coalio/amber/master/installer/install.sh | bash -s -- my-workspace
 ```
 
 This downloads the latest GitHub release, installs Amber under `~/.amber`, creates `~/.amber/workspaces/my-workspace`, runs interactive authentication, and asks whether to install the optional user service.

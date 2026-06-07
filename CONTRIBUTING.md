@@ -62,7 +62,7 @@ The build writes `dist/amber-linux-x86_64.tar.gz` and a SHA256 file. If the arch
 
 ## Installer Overrides
 
-The installer defaults to the latest `coalio/amber-blue` GitHub release. Maintainers can override install behavior with environment variables:
+The installer defaults to the latest `coalio/amber` GitHub release. Maintainers can override install behavior with environment variables:
 
 - `AMBER_REPO` changes the GitHub repository.
 - `AMBER_HOME` changes the install root.

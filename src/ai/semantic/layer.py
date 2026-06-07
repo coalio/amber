@@ -175,7 +175,7 @@ class ConsciousHarness:
 
 
 class AILayer:
-    _logger = get_logger("amber_blue.ai.semantic")
+    _logger = get_logger("amber.ai.semantic")
 
     def __init__(self, config: AIConfig, semantic_client: SemanticClient) -> None:
         self._config = config

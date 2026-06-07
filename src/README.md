@@ -10,7 +10,7 @@ Amber is assembled as one process with an in-memory event bus:
 receiver -> attention -> context -> ai -> outbound -> action
 ```
 
-`build_application()` wires the stores, adapters, receivers, semantic model client, pipeline layers, and Telegram transport. `AmberBlueApplication.run_telegram_forever()` registers external receivers, starts Telegram, replays any open-question backlog, syncs presence, and then runs until Telegram disconnects.
+`build_application()` wires the stores, adapters, receivers, semantic model client, pipeline layers, and Telegram transport. `AmberApplication.run_telegram_forever()` registers external receivers, starts Telegram, replays any open-question backlog, syncs presence, and then runs until Telegram disconnects.
 
 ## Subsystems
 

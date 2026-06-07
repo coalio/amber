@@ -118,7 +118,7 @@ def test_configure_logging_creates_timestamped_run_file(
         assert run_path.parent.name.count("-") == 2
         assert run_path.suffix == ".log"
 
-        log_utils.get_logger("amber_blue.test").info(
+        log_utils.get_logger("amber.test").info(
             "log.smoke",
             extra={"event": "log.smoke", "context": {"ok": True}},
         )

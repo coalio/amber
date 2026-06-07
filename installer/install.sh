@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="${AMBER_REPO:-coalio/amber-blue}"
+REPO="${AMBER_REPO:-coalio/amber}"
 AMBER_HOME="${AMBER_HOME:-$HOME/.amber}"
 ASSET_NAME="${AMBER_ASSET_NAME:-amber-linux-x86_64.tar.gz}"
 WORKSPACE_NAME="${1:-${AMBER_WORKSPACE:-}}"

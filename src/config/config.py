@@ -106,81 +106,81 @@ class Settings(BaseModel):
 
 
 ENV_OVERRIDES: dict[str, tuple[str, ...]] = {
-    "AMBER_BLUE_MODE": ("mode",),
-    "AMBER_BLUE_TIMEZONE": ("timezone",),
-    "AMBER_BLUE_AI_PROVIDER": ("ai", "provider"),
-    "AMBER_BLUE_AI_API_KEY": ("ai", "api_key"),
-    "AMBER_BLUE_AI_MODEL": ("ai", "model"),
-    "AMBER_BLUE_AI_SEMANTIC_RETRY_BUDGET": ("ai", "semantic_retry_budget"),
-    "AMBER_BLUE_AI_MAX_DRAFT_CHARS": ("ai", "max_draft_chars"),
-    "AMBER_BLUE_AI_MAX_OUTPUT_TOKENS": ("ai", "max_output_tokens"),
-    "AMBER_BLUE_AI_TEMPERATURE": ("ai", "temperature"),
+    "AMBER_MODE": ("mode",),
+    "AMBER_TIMEZONE": ("timezone",),
+    "AMBER_AI_PROVIDER": ("ai", "provider"),
+    "AMBER_AI_API_KEY": ("ai", "api_key"),
+    "AMBER_AI_MODEL": ("ai", "model"),
+    "AMBER_AI_SEMANTIC_RETRY_BUDGET": ("ai", "semantic_retry_budget"),
+    "AMBER_AI_MAX_DRAFT_CHARS": ("ai", "max_draft_chars"),
+    "AMBER_AI_MAX_OUTPUT_TOKENS": ("ai", "max_output_tokens"),
+    "AMBER_AI_TEMPERATURE": ("ai", "temperature"),
     "API_ID": ("telegram", "api_id"),
     "API_HASH": ("telegram", "api_hash"),
     "TELEGRAM_SESSION_PATH": ("telegram", "session_path"),
-    "AMBER_BLUE_ENABLE_REAL_DELAYS": ("runtime", "enable_real_delays"),
-    "AMBER_BLUE_DISABLE_SLEEP_STATE": ("runtime", "disable_sleep_state"),
-    "AMBER_BLUE_CONTEXT_DEBOUNCE_SECONDS": ("context", "debounce_seconds"),
-    "AMBER_BLUE_CONTEXT_IDLE_TIMEOUT_SECONDS": ("context", "idle_timeout_seconds"),
-    "AMBER_BLUE_CONTEXT_IDLE_TIMEOUT_MIN_SECONDS": ("context", "idle_timeout_min_seconds"),
-    "AMBER_BLUE_CONTEXT_IDLE_TIMEOUT_MAX_SECONDS": ("context", "idle_timeout_max_seconds"),
-    "AMBER_BLUE_CONTEXT_COMPETING_CHAT_TIMEOUT_SECONDS": ("context", "competing_chat_timeout_seconds"),
-    "AMBER_BLUE_CONTEXT_RECENT_MESSAGE_BUDGET": ("context", "recent_message_budget"),
-    "AMBER_BLUE_CONTEXT_MAX_COMPACTED_FACTS": ("context", "max_compacted_facts"),
-    "AMBER_BLUE_CONTEXT_INITIAL_ENGAGEMENT_DELAY_MIN_SECONDS": (
+    "AMBER_ENABLE_REAL_DELAYS": ("runtime", "enable_real_delays"),
+    "AMBER_DISABLE_SLEEP_STATE": ("runtime", "disable_sleep_state"),
+    "AMBER_CONTEXT_DEBOUNCE_SECONDS": ("context", "debounce_seconds"),
+    "AMBER_CONTEXT_IDLE_TIMEOUT_SECONDS": ("context", "idle_timeout_seconds"),
+    "AMBER_CONTEXT_IDLE_TIMEOUT_MIN_SECONDS": ("context", "idle_timeout_min_seconds"),
+    "AMBER_CONTEXT_IDLE_TIMEOUT_MAX_SECONDS": ("context", "idle_timeout_max_seconds"),
+    "AMBER_CONTEXT_COMPETING_CHAT_TIMEOUT_SECONDS": ("context", "competing_chat_timeout_seconds"),
+    "AMBER_CONTEXT_RECENT_MESSAGE_BUDGET": ("context", "recent_message_budget"),
+    "AMBER_CONTEXT_MAX_COMPACTED_FACTS": ("context", "max_compacted_facts"),
+    "AMBER_CONTEXT_INITIAL_ENGAGEMENT_DELAY_MIN_SECONDS": (
         "context",
         "initial_engagement_delay_min_seconds",
     ),
-    "AMBER_BLUE_CONTEXT_INITIAL_ENGAGEMENT_DELAY_MAX_SECONDS": (
+    "AMBER_CONTEXT_INITIAL_ENGAGEMENT_DELAY_MAX_SECONDS": (
         "context",
         "initial_engagement_delay_max_seconds",
     ),
-    "AMBER_BLUE_CONTEXT_CONVERSATION_WINDOW_BEFORE": ("context", "conversation_window_before"),
-    "AMBER_BLUE_CONTEXT_CONVERSATION_WINDOW_AFTER": ("context", "conversation_window_after"),
-    "AMBER_BLUE_ATTENTION_SURFACE_THRESHOLD": ("attention", "surface_threshold"),
-    "AMBER_BLUE_ATTENTION_URGENT_THRESHOLD": ("attention", "urgent_threshold"),
-    "AMBER_BLUE_ATTENTION_MEMORY_LIMIT": ("attention", "memory_limit"),
-    "AMBER_BLUE_OUTBOUND_MAX_CHUNK_CHARS": ("outbound", "max_chunk_chars"),
-    "AMBER_BLUE_ACTION_MAX_RETRIES": ("action", "transport_max_retries"),
-    "AMBER_BLUE_ACTION_RETRY_DELAY_SECONDS": ("action", "transport_retry_delay_seconds"),
-    "AMBER_BLUE_ACTION_TYPING_BASELINE_WPM": ("action", "typing_baseline_wpm"),
-    "AMBER_BLUE_ACTION_FILLER_PAUSE_SECONDS": ("action", "filler_pause_seconds"),
-    "AMBER_BLUE_ACTION_INTER_CHUNK_DELAY_MIN_SECONDS": ("action", "inter_chunk_delay_min_seconds"),
-    "AMBER_BLUE_ACTION_INTER_CHUNK_DELAY_MAX_SECONDS": ("action", "inter_chunk_delay_max_seconds"),
-    "AMBER_BLUE_ACTION_INTER_CHUNK_DELAY_LENGTH_THRESHOLD_CHARS": (
+    "AMBER_CONTEXT_CONVERSATION_WINDOW_BEFORE": ("context", "conversation_window_before"),
+    "AMBER_CONTEXT_CONVERSATION_WINDOW_AFTER": ("context", "conversation_window_after"),
+    "AMBER_ATTENTION_SURFACE_THRESHOLD": ("attention", "surface_threshold"),
+    "AMBER_ATTENTION_URGENT_THRESHOLD": ("attention", "urgent_threshold"),
+    "AMBER_ATTENTION_MEMORY_LIMIT": ("attention", "memory_limit"),
+    "AMBER_OUTBOUND_MAX_CHUNK_CHARS": ("outbound", "max_chunk_chars"),
+    "AMBER_ACTION_MAX_RETRIES": ("action", "transport_max_retries"),
+    "AMBER_ACTION_RETRY_DELAY_SECONDS": ("action", "transport_retry_delay_seconds"),
+    "AMBER_ACTION_TYPING_BASELINE_WPM": ("action", "typing_baseline_wpm"),
+    "AMBER_ACTION_FILLER_PAUSE_SECONDS": ("action", "filler_pause_seconds"),
+    "AMBER_ACTION_INTER_CHUNK_DELAY_MIN_SECONDS": ("action", "inter_chunk_delay_min_seconds"),
+    "AMBER_ACTION_INTER_CHUNK_DELAY_MAX_SECONDS": ("action", "inter_chunk_delay_max_seconds"),
+    "AMBER_ACTION_INTER_CHUNK_DELAY_LENGTH_THRESHOLD_CHARS": (
         "action",
         "inter_chunk_delay_length_threshold_chars",
     ),
-    "AMBER_BLUE_ACTION_INTER_CHUNK_DELAY_CHARS_PER_STEP": (
+    "AMBER_ACTION_INTER_CHUNK_DELAY_CHARS_PER_STEP": (
         "action",
         "inter_chunk_delay_chars_per_step",
     ),
-    "AMBER_BLUE_ACTION_INTER_CHUNK_DELAY_STEP_SECONDS": ("action", "inter_chunk_delay_step_seconds"),
-    "AMBER_BLUE_ACTION_INTER_CHUNK_DELAY_TOTAL_MAX_SECONDS": (
+    "AMBER_ACTION_INTER_CHUNK_DELAY_STEP_SECONDS": ("action", "inter_chunk_delay_step_seconds"),
+    "AMBER_ACTION_INTER_CHUNK_DELAY_TOTAL_MAX_SECONDS": (
         "action",
         "inter_chunk_delay_total_max_seconds",
     ),
-    "AMBER_BLUE_CODEX_WORKDIR": ("codex", "workdir"),
-    "AMBER_BLUE_CODEX_APP_SERVER_URL": ("codex", "app_server_url"),
-    "AMBER_BLUE_CODEX_APP_SERVER_PORT": ("codex", "app_server_port"),
-    "AMBER_BLUE_CODEX_PODMAN": ("codex", "podman_executable"),
-    "AMBER_BLUE_CODEX_CGROUP_MANAGER": ("codex", "podman_cgroup_manager"),
-    "AMBER_BLUE_CODEX_ENFORCE_RESOURCE_LIMITS": ("codex", "enforce_resource_limits"),
-    "AMBER_BLUE_CODEX_CONTAINER_NAME": ("codex", "container_name"),
-    "AMBER_BLUE_CODEX_APP_SERVER_COMMAND": ("codex", "app_server_command"),
-    "AMBER_BLUE_CODEX_GITHUB_AUTH_DIR": ("codex", "github_auth_dir"),
-    "AMBER_BLUE_CODEX_HOME_DIR": ("codex", "home_dir"),
-    "AMBER_BLUE_CODEX_MODEL": ("codex", "model"),
-    "AMBER_BLUE_CODEX_REASONING_EFFORT": ("codex", "reasoning_effort"),
-    "AMBER_BLUE_CODEX_AUTO_UPDATE": ("codex", "auto_update"),
-    "AMBER_BLUE_LINEAR_ENABLED": ("linear", "enabled"),
-    "AMBER_BLUE_LINEAR_API_KEY": ("linear", "api_key"),
-    "AMBER_BLUE_LINEAR_API_URL": ("linear", "api_url"),
-    "AMBER_BLUE_LINEAR_POLL_SECONDS": ("linear", "poll_seconds"),
-    "AMBER_BLUE_LINEAR_DUE_WINDOW_DAYS": ("linear", "due_window_days"),
-    "AMBER_BLUE_LINEAR_STATUS_IN_PROGRESS": ("linear", "status_in_progress"),
-    "AMBER_BLUE_LINEAR_STATUS_UNDER_REVIEW": ("linear", "status_under_review"),
-    "AMBER_BLUE_LINEAR_STATUS_COMPLETED": ("linear", "status_completed"),
+    "AMBER_CODEX_WORKDIR": ("codex", "workdir"),
+    "AMBER_CODEX_APP_SERVER_URL": ("codex", "app_server_url"),
+    "AMBER_CODEX_APP_SERVER_PORT": ("codex", "app_server_port"),
+    "AMBER_CODEX_PODMAN": ("codex", "podman_executable"),
+    "AMBER_CODEX_CGROUP_MANAGER": ("codex", "podman_cgroup_manager"),
+    "AMBER_CODEX_ENFORCE_RESOURCE_LIMITS": ("codex", "enforce_resource_limits"),
+    "AMBER_CODEX_CONTAINER_NAME": ("codex", "container_name"),
+    "AMBER_CODEX_APP_SERVER_COMMAND": ("codex", "app_server_command"),
+    "AMBER_CODEX_GITHUB_AUTH_DIR": ("codex", "github_auth_dir"),
+    "AMBER_CODEX_HOME_DIR": ("codex", "home_dir"),
+    "AMBER_CODEX_MODEL": ("codex", "model"),
+    "AMBER_CODEX_REASONING_EFFORT": ("codex", "reasoning_effort"),
+    "AMBER_CODEX_AUTO_UPDATE": ("codex", "auto_update"),
+    "AMBER_LINEAR_ENABLED": ("linear", "enabled"),
+    "AMBER_LINEAR_API_KEY": ("linear", "api_key"),
+    "AMBER_LINEAR_API_URL": ("linear", "api_url"),
+    "AMBER_LINEAR_POLL_SECONDS": ("linear", "poll_seconds"),
+    "AMBER_LINEAR_DUE_WINDOW_DAYS": ("linear", "due_window_days"),
+    "AMBER_LINEAR_STATUS_IN_PROGRESS": ("linear", "status_in_progress"),
+    "AMBER_LINEAR_STATUS_UNDER_REVIEW": ("linear", "status_under_review"),
+    "AMBER_LINEAR_STATUS_COMPLETED": ("linear", "status_completed"),
 }
 
 
@@ -381,7 +381,7 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
 
 
 def _apply_env_overrides(data: dict[str, Any]) -> None:
-    if os.getenv("OPENAI_API_KEY") and not os.getenv("AMBER_BLUE_AI_API_KEY"):
+    if os.getenv("OPENAI_API_KEY") and not os.getenv("AMBER_AI_API_KEY"):
         _set_path(data, ("ai", "api_key"), os.environ["OPENAI_API_KEY"])
     for fallback in ("MODEL_API_KEY", "OPENAI_KEY"):
         if os.getenv(fallback) and _is_missing(_value_or_none(data, ("ai", "api_key"))):
@@ -389,11 +389,11 @@ def _apply_env_overrides(data: dict[str, Any]) -> None:
     for env_name, path in ENV_OVERRIDES.items():
         if env_name in os.environ:
             value: Any = os.environ[env_name]
-            if env_name == "AMBER_BLUE_ALWAYS_SURFACE_TELEGRAM_IDS":
+            if env_name == "AMBER_ALWAYS_SURFACE_TELEGRAM_IDS":
                 value = _list_value(value)
             _set_path(data, path, value)
-    if "AMBER_BLUE_ALWAYS_SURFACE_TELEGRAM_IDS" in os.environ:
-        _set_path(data, ("attention", "always_surface_telegram_ids"), _list_value(os.environ["AMBER_BLUE_ALWAYS_SURFACE_TELEGRAM_IDS"]))
+    if "AMBER_ALWAYS_SURFACE_TELEGRAM_IDS" in os.environ:
+        _set_path(data, ("attention", "always_surface_telegram_ids"), _list_value(os.environ["AMBER_ALWAYS_SURFACE_TELEGRAM_IDS"]))
 
 
 def _set_path(data: dict[str, Any], path: tuple[str, ...], value: Any) -> None:

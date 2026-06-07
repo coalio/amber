@@ -10,7 +10,7 @@ Important environment variables:
 
 - `AMBER_HOME`: install and workspace root, defaulting to `~/.amber`.
 - `AMBER_WORKSPACE`: default workspace when no explicit workspace is passed.
-- `AMBER_BLUE_*`: runtime-specific overrides.
+- `AMBER_*`: runtime-specific overrides.
 - `API_ID` and `API_HASH`: Telegram credential overrides.
 - `OPENAI_API_KEY`: fallback for the Amber AI API key.
 

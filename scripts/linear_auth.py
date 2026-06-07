@@ -63,7 +63,7 @@ def status(workspace: str | None) -> int:
     get_settings.cache_clear()
     settings = get_settings(workspace)
     if not settings.linear_api_key:
-        print("Linear API key is not configured. Set AMBER_BLUE_LINEAR_API_KEY or run configure.", file=sys.stderr)
+        print("Linear API key is not configured. Set AMBER_LINEAR_API_KEY or run configure.", file=sys.stderr)
         return 2
     client = LinearGraphQLClient(api_key=settings.linear_api_key, api_url=settings.linear_api_url)
     _progress("checking Linear viewer")

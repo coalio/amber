@@ -32,21 +32,21 @@ def test_memory_tools_manage_expertise_and_read_profile(tmp_path: Path) -> None:
         {
             "operation": "create_expertise",
             "sender_id": "1001001001",
-            "display_name": "Coal",
-            "text": "Coal owns the Amber Blue Telegram integration.",
-            "tags": ["amber-blue", "telegram"],
+            "display_name": "Fixture Owner",
+            "text": "Fixture Owner manages the Amber Telegram integration.",
+            "tags": ["amber", "telegram"],
             "memory_id": None,
             "expertise_tags": ["telegram-backend"],
-            "project_owner_tags": ["amber-blue"],
+            "project_owner_tags": ["amber"],
         },
     )
     read_result = session.execute("GetMemory", {"sender_id": "1001001001", "query": "telegram", "limit": 5})
 
     assert manage_result["profile"]["expertise_tags"] == ["telegram-backend"]
-    assert manage_result["profile"]["project_owner_tags"] == ["amber-blue"]
-    assert read_result["profile"]["display_name"] == "Coal"
+    assert manage_result["profile"]["project_owner_tags"] == ["amber"]
+    assert read_result["profile"]["display_name"] == "Fixture Owner"
     assert read_result["profile"]["expertise_tags"] == ["telegram-backend"]
-    assert read_result["memories"][0]["text"] == "Coal owns the Amber Blue Telegram integration."
+    assert read_result["memories"][0]["text"] == "Fixture Owner manages the Amber Telegram integration."
 
 
 def test_codex_receiver_surfaces_allowlisted_candidates_with_expertise(tmp_path: Path) -> None:
@@ -54,9 +54,9 @@ def test_codex_receiver_surfaces_allowlisted_candidates_with_expertise(tmp_path:
     memory_store = MemoryStore(tmp_path / "memories")
     memory_store.update_profile_tags(
         "1001001001",
-        "Coal",
+        "Fixture Owner",
         expertise_tags=["python", "telegram-backend"],
-        project_owner_tags=["amber-blue"],
+        project_owner_tags=["amber"],
     )
     adapter = CodexAdapter()
     receiver = CodexReceiver(adapter, memory_store, ["1001001001"])
@@ -71,7 +71,7 @@ def test_codex_receiver_surfaces_allowlisted_candidates_with_expertise(tmp_path:
             tool_call_id="tool_1",
             questions=["Which constraints matter?"],
             task_description="Create a small Python script.",
-            context={"repo": "amber-blue"},
+            context={"repo": "amber"},
         )
     )
 
@@ -79,9 +79,9 @@ def test_codex_receiver_surfaces_allowlisted_candidates_with_expertise(tmp_path:
     candidate = seen[0].payload.candidate_people[0]
     assert candidate.sender_id == "1001001001"
     assert candidate.chat_id == 1001001001
-    assert candidate.display_name == "Coal"
+    assert candidate.display_name == "Fixture Owner"
     assert candidate.expertise_tags == ["python", "telegram-backend"]
-    assert candidate.project_owner_tags == ["amber-blue"]
+    assert candidate.project_owner_tags == ["amber"]
 
 
 def test_codex_adapter_skips_question_completed_in_same_event_batch() -> None:
@@ -291,7 +291,7 @@ def test_codex_task_lifecycle_handler_uses_pr_events_for_linear_status(tmp_path:
                 "title": "Small task",
                 "due_date": "2026-06-01",
                 "status": "Planned",
-                "project": "Amber Blue",
+                "project": "Amber",
             }
         ],
         seen_at=utc_now(),
@@ -443,7 +443,7 @@ def test_codex_send_reply_submits_output_and_clears_open_question(tmp_path: Path
     state_store.remember_open_question(
         chat_id="1001001001",
         sender_id="1001001001",
-        sender_name="Coal",
+        sender_name="Fixture Owner",
         app_server_id="codex-sandbox",
         task_id="task_1",
         tool_call_id="tool_1",
@@ -454,7 +454,7 @@ def test_codex_send_reply_submits_output_and_clears_open_question(tmp_path: Path
             OpenQuestionCandidate(
                 sender_id="1001001001",
                 chat_id="1001001001",
-                display_name="Coal",
+                display_name="Fixture Owner",
                 expertise_tags=["python"],
                 project_owner_tags=[],
             )

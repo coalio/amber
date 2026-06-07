@@ -138,7 +138,7 @@ class CodexAdapter(BaseAdapter):
         self._completed_tool_call_keys: set[tuple[str, str, str]] = set()
         self._codex_update_checked = False
         self._codex_update_lock = threading.Lock()
-        self._logger = get_logger("amber_blue.adapters.codex")
+        self._logger = get_logger("amber.adapters.codex")
 
     def preflight(self) -> None:
         if shutil.which(self._podman_executable) is None:

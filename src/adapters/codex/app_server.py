@@ -424,8 +424,8 @@ class CodexTaskRunner:
                 "initialize",
                 {
                     "clientInfo": {
-                        "name": "amber_blue",
-                        "title": "Amber Blue",
+                        "name": "amber",
+                        "title": "Amber",
                         "version": "0.1.0",
                     },
                     "capabilities": {"experimentalApi": True},
@@ -471,7 +471,7 @@ class CodexTaskRunner:
             return
         params: dict[str, Any] = {
             "cwd": "/work",
-            "serviceName": "amber-blue",
+            "serviceName": "amber",
             "developerInstructions": str(self.payload.get("system_prompt") or ""),
             "approvalPolicy": "never",
             "sandbox": "danger-full-access",

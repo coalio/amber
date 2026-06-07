@@ -40,7 +40,7 @@ from src.utils.scheduler import RuntimeScheduler
 
 
 @dataclass
-class AmberBlueApplication:
+class AmberApplication:
     settings: Settings
     state_store: GlobalStateStore
     message_archive: MessageArchive
@@ -82,7 +82,7 @@ def build_application(
     attention_scorer: AttentionPolicyScorer | None = None,
     transport: object | None = None,
     enable_telegram: bool = False,
-) -> AmberBlueApplication:
+) -> AmberApplication:
     EventBus.reset_for_tests()
     settings = settings or get_settings()
     configure_logging(log_dir=settings.log_dir, timezone_name=settings.timezone_name)
@@ -115,7 +115,7 @@ def build_application(
     if settings.mode == "work" and settings.linear_enabled:
         linear_config = LinearReceiverConfig.from_settings(settings)
         if not linear_config.api_key:
-            raise RuntimeError("AMBER_BLUE_LINEAR_ENABLED=1 requires AMBER_BLUE_LINEAR_API_KEY.")
+            raise RuntimeError("AMBER_LINEAR_ENABLED=1 requires AMBER_LINEAR_API_KEY.")
         linear_receiver = LinearReceiver(
             client=LinearGraphQLClient(api_key=linear_config.api_key, api_url=linear_config.api_url),
             state_store=state_store,
@@ -166,7 +166,7 @@ def build_application(
         message_archive,
         settings.timezone_name,
     )
-    return AmberBlueApplication(
+    return AmberApplication(
         settings=settings,
         state_store=state_store,
         message_archive=message_archive,

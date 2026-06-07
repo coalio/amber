@@ -45,8 +45,8 @@ class AttentionPolicyScorer:
         cache_size: int = 1024,
         warm: bool = True,
     ) -> None:
-        self.model_name = model_name or os.getenv("AMBER_BLUE_ATTENTION_MODEL") or DEFAULT_ATTENTION_MODEL
-        self.model_revision = revision or os.getenv("AMBER_BLUE_ATTENTION_MODEL_REVISION") or DEFAULT_ATTENTION_MODEL_REVISION
+        self.model_name = model_name or os.getenv("AMBER_ATTENTION_MODEL") or DEFAULT_ATTENTION_MODEL
+        self.model_revision = revision or os.getenv("AMBER_ATTENTION_MODEL_REVISION") or DEFAULT_ATTENTION_MODEL_REVISION
         self.max_length = max_length
         self._cache_size = cache_size
         self._cache: OrderedDict[str, AttentionModelClassification] = OrderedDict()
@@ -92,7 +92,7 @@ class AttentionPolicyScorer:
                 "ModernBERT Attention scoring requires `torch` and `transformers`. "
                 "Install project requirements before running the live runtime."
             ) from exc
-        device = requested_device or os.getenv("AMBER_BLUE_ATTENTION_DEVICE")
+        device = requested_device or os.getenv("AMBER_ATTENTION_DEVICE")
         if not device:
             device = "cuda" if torch.cuda.is_available() else "cpu"
         tokenizer = AutoTokenizer.from_pretrained(self.model_name, revision=self.model_revision)

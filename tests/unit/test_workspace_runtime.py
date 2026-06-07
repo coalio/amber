@@ -30,7 +30,7 @@ def test_workspace_init_creates_fixed_layout(monkeypatch, tmp_path) -> None:
 
 def test_settings_load_workspace_toml_and_env_overrides(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("AMBER_HOME", str(tmp_path / ".amber"))
-    monkeypatch.setenv("AMBER_BLUE_AI_MODEL", "gpt-test")
+    monkeypatch.setenv("AMBER_AI_MODEL", "gpt-test")
     get_settings.cache_clear()
 
     workspace = init_workspace("indiedreamers")

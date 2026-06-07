@@ -1,2 +1,2 @@
-"""amber-blue orchestration package."""
+"""amber orchestration package."""
 

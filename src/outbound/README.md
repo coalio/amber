@@ -5,7 +5,7 @@ Outbound preparation turns semantic draft text into delivery-ready Telegram mess
 ## Responsibilities
 
 - Convert non-reply decisions into `no_send` outbound events.
-- Normalize Codex-facing drafts into a more natural Telegram response.
+- Preserve Amber's semantic draft text while preparing Telegram delivery chunks.
 - Split long output into chunks while preserving code blocks.
 - Preserve reply target and visible-read metadata from the semantic decision.
 

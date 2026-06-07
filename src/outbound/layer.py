@@ -11,18 +11,6 @@ from src.state.store import GlobalStateStore
 
 
 class OutboundPreparationLayer:
-    _CODEX_PUNCTUATION_TRANSLATION = str.maketrans(
-        {
-            "—": "-",
-            "–": "-",
-            "“": '"',
-            "”": '"',
-            "‘": "'",
-            "’": "'",
-            "…": "...",
-        }
-    )
-
     def __init__(self, config: OutboundPreparationConfig, state_store: GlobalStateStore) -> None:
         self._config = config
         self._state_store = state_store
@@ -54,11 +42,6 @@ class OutboundPreparationLayer:
                         ),
                     )
                 )
-                return
-
-            if payload.codex_app_server_id:
-                prepared = self._rewrite_codex_draft(payload.draft_text or "")
-                self._emit_prepared(event, payload, prepared, state.mood)
                 return
 
             self._emit_prepared(event, payload, self._prepare_plain_draft(payload.draft_text or ""), state.mood)
@@ -96,19 +79,6 @@ class OutboundPreparationLayer:
 
     def _prepare_plain_draft(self, draft_text: str) -> str:
         return draft_text.strip()
-
-    def _rewrite_codex_draft(self, draft_text: str) -> str:
-        text = "\n".join(line.strip() for line in draft_text.strip().splitlines() if line.strip())
-        text = text.translate(self._CODEX_PUNCTUATION_TRANSLATION)
-        text = re.sub(r"(?i)^(got it|cool|okay|ok|sounds good)[,:\s-]+", "", text).strip()
-        text = re.sub(r"(?i)\s*(so )?i can (let|tell) codex know\.?", "", text).strip()
-        text = re.sub(r"(?i)\b(i'?ll|i will)\s+(send|pass|forward)\s+(it|this|that)?\s*(along\s+)?to codex\b\.?", "i'll keep going", text)
-        text = re.sub(r"(?i)\bsending\s+(it|this|that)?\s*(along\s+)?to codex\b\.?", "i'll keep going", text)
-        text = re.sub(r"(?i)\bwhat codex needs\b", "what i need", text)
-        text = re.sub(r"(?i)\bcodex needs\b", "i need", text)
-        if "```" not in text:
-            text = text.lower()
-        return text
 
     def _split_output(self, output_text: str) -> list[str]:
         cleaned = output_text.strip()

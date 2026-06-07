@@ -47,26 +47,23 @@ def test_outbound_preparation_layer_keeps_fenced_code_blocks_together_and_wraps_
     assert all(len(message) <= 12 for message in ordered_messages[2:])
 
 
-def test_codex_draft_rewrite_removes_relay_framing(tmp_path) -> None:
+def test_codex_metadata_does_not_rewrite_draft_text(tmp_path) -> None:
     capture: list[OutboundMessagePreparedEvent] = []
     EventBus.subscribe("OutboundMessagePreparedEvent", capture.append)
     layer = _build_layer(tmp_path)
 
     layer.handle_semantic_decision(
         _reply_event(
-            draft_text=(
-                "Got it - What architecture do you prefer so I can let Codex know?\n"
-                "I'll send this to Codex."
-            ),
+            draft_text="Keep THIS exact draft.\nSecond Line stays unchanged.",
             codex=True,
         )
     )
 
     assert capture
-    output = "\n".join(capture[-1].payload.ordered_messages)
-    assert "codex" not in output
-    assert "got it" not in output
-    assert output == "what architecture do you prefer?\ni'll keep going"
+    assert capture[-1].payload.ordered_messages == [
+        "Keep THIS exact draft.",
+        "Second Line stays unchanged.",
+    ]
 
 
 def test_outbound_preparation_layer_preserves_first_person_direction(tmp_path) -> None:

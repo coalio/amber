@@ -49,12 +49,44 @@ asset_part_urls_for() {
   sed -n 's/.*"browser_download_url": *"\([^"]*\)".*/\1/p' | grep "/$asset.part-" | sort || true
 }
 
+archive_is_readable() {
+  local archive="$1"
+  tar -tzf "$archive" >/dev/null 2>&1
+}
+
+download_github_release_archive() {
+  local archive="$1"
+  local tag="$2"
+  local url="$3"
+  local part_urls="$4"
+
+  if [[ -n "$part_urls" && -z "$url" ]]; then
+    echo "Downloading split Amber $tag assets from $REPO..."
+    : > "$archive"
+
+    # assemble split assets into the tarball shape the rest of install expects
+    local archive_dir part part_file index
+    archive_dir="${archive%/*}"
+    index=0
+    while IFS= read -r part; do
+      part_file="$archive_dir/part-$index"
+      curl -fL "$part" -o "$part_file"
+      cat "$part_file" >> "$archive"
+      index=$((index + 1))
+    done <<< "$part_urls"
+  else
+    echo "Downloading Amber $tag from $REPO..."
+    curl -fL "$url" -o "$archive"
+  fi
+}
+
 install_release() {
   need_command curl
   need_command tar
   need_command mktemp
 
-  local json tag url part_urls tmp archive release_tmp release_dir
+  local json tag url part_urls tmp archive release_tmp release_dir cache_dir cached_archive
+  # resolve the release source before choosing a local cache path
   if [[ -n "$RELEASE_ARCHIVE" ]]; then
     tag="${RELEASE_TAG:-local}"
     url=""
@@ -73,29 +105,40 @@ install_release() {
     fi
   fi
 
+  # keep extraction work isolated from the persistent release directories
   tmp="$(mktemp -d)"
   archive="$tmp/$ASSET_NAME"
   release_tmp="$tmp/release"
   release_dir="$AMBER_HOME/releases/$tag"
 
+  # cache normal github release downloads by tag and asset name
   if [[ -n "$RELEASE_ARCHIVE" ]]; then
     echo "Installing Amber $tag from $RELEASE_ARCHIVE..."
     cp "$RELEASE_ARCHIVE" "$archive"
-  elif [[ -n "${part_urls:-}" && -z "$url" ]]; then
-    echo "Downloading split Amber $tag assets from $REPO..."
-    : > "$archive"
-    local part part_file index
-    index=0
-    while IFS= read -r part; do
-      part_file="$tmp/part-$index"
-      curl -fL "$part" -o "$part_file"
-      cat "$part_file" >> "$archive"
-      index=$((index + 1))
-    done <<< "$part_urls"
-  else
-    echo "Downloading Amber $tag from ${RELEASE_URL:-$REPO}..."
+  elif [[ -n "$RELEASE_URL" ]]; then
+    echo "Downloading Amber $tag from $RELEASE_URL..."
     curl -fL "$url" -o "$archive"
+  else
+    cache_dir="$AMBER_HOME/packages/$tag"
+    cached_archive="$cache_dir/$ASSET_NAME"
+    if [[ -f "$cached_archive" ]] && archive_is_readable "$cached_archive"; then
+      echo "Reusing downloaded Amber $tag package from $cached_archive..."
+      archive="$cached_archive"
+    else
+      if [[ -f "$cached_archive" ]]; then
+        echo "Cached Amber $tag package is not readable; downloading it again..." >&2
+      fi
+      download_github_release_archive "$archive" "$tag" "$url" "${part_urls:-}"
+      if ! archive_is_readable "$archive"; then
+        echo "Downloaded Amber $tag package is not a readable tar.gz archive." >&2
+        exit 1
+      fi
+      mkdir -p "$cache_dir"
+      cp "$archive" "$cached_archive"
+    fi
   fi
+
+  # replace the selected release while preserving workspaces and old cached packages
   mkdir -p "$release_tmp" "$AMBER_HOME/releases" "$AMBER_HOME/bin" "$AMBER_HOME/workspaces"
   tar -xzf "$archive" -C "$release_tmp"
 

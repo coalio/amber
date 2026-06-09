@@ -22,6 +22,7 @@ def test_installer_downloads_split_release_without_full_asset(tmp_path: Path) ->
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
+    _add_fake_installer_prereqs(fake_bin)
     _write_executable(
         fake_bin / "curl",
         """
@@ -109,6 +110,7 @@ def test_installer_reuses_cached_release_archive(tmp_path: Path) -> None:
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
+    _add_fake_installer_prereqs(fake_bin)
     curl_log = tmp_path / "curl.log"
     _write_executable(
         fake_bin / "curl",
@@ -214,6 +216,7 @@ def test_installer_recovers_tmp_release_archive_before_download(tmp_path: Path) 
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
+    _add_fake_installer_prereqs(fake_bin)
     curl_log = tmp_path / "curl.log"
     _write_executable(
         fake_bin / "curl",
@@ -297,6 +300,67 @@ def test_installer_recovers_tmp_release_archive_before_download(tmp_path: Path) 
     ]
 
 
+def test_installer_preflight_fails_before_release_lookup_when_podman_is_broken(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    curl_log = tmp_path / "curl.log"
+    _write_executable(
+        fake_bin / "curl",
+        """
+        #!/usr/bin/env bash
+        set -euo pipefail
+        printf '%s\\n' "$*" >> "$FAKE_CURL_LOG"
+        exit 2
+        """,
+    )
+    _write_executable(
+        fake_bin / "podman",
+        """
+        #!/usr/bin/env bash
+        set -euo pipefail
+        if [[ "${1:-}" == "run" && "${2:-}" == "--help" ]]; then
+          printf '%s\\n' '--userns --network --cgroups --memory --cpus --pids-limit'
+          exit 0
+        fi
+        echo "podman is not configured" >&2
+        exit 125
+        """,
+    )
+    _write_executable(
+        fake_bin / "slirp4netns",
+        """
+        #!/usr/bin/env bash
+        exit 0
+        """,
+    )
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "AMBER_HOME": str(tmp_path / ".amber"),
+            "AMBER_INSTALL_FIX_SYSTEM": "no",
+            "AMBER_INSTALL_SERVICE": "n",
+            "FAKE_CURL_LOG": str(curl_log),
+            "PATH": f"{fake_bin}:{env['PATH']}",
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", "installer/install.sh", "indiedreamers"],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode != 0
+    assert "Amber installer preflight failed before downloading the release." in result.stderr
+    assert not curl_log.exists()
+
+
 def _make_release_archive(tmp_path: Path) -> Path:
     release_root = tmp_path / "release"
     release_root.mkdir()
@@ -321,3 +385,34 @@ def _make_release_archive(tmp_path: Path) -> Path:
 def _write_executable(path: Path, content: str) -> None:
     path.write_text(textwrap.dedent(content).lstrip(), encoding="utf-8")
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
+
+
+def _add_fake_installer_prereqs(fake_bin: Path) -> None:
+    _write_executable(
+        fake_bin / "podman",
+        """
+        #!/usr/bin/env bash
+        set -euo pipefail
+        if [[ "${1:-}" == "info" && "${2:-}" == "--debug" ]]; then
+          cat <<'INFO'
+        host:
+          security:
+            rootless: true
+          cgroupVersion: v2
+        INFO
+          exit 0
+        fi
+        if [[ "${1:-}" == "run" && "${2:-}" == "--help" ]]; then
+          printf '%s\\n' '--userns --network --cgroups --memory --cpus --pids-limit'
+          exit 0
+        fi
+        exit 0
+        """,
+    )
+    _write_executable(
+        fake_bin / "slirp4netns",
+        """
+        #!/usr/bin/env bash
+        exit 0
+        """,
+    )

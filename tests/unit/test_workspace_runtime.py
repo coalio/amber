@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
-from src.adapters.codex import build_codex_adapter, exec_in_codex_sandbox
 from src.ai.semantic.config import SemanticConfig
 from src.config.config import get_settings
-from src.config.workspace import init_workspace, install_user_service, render_user_service
+from src.config.workspace import doctor_workspace, init_workspace, install_user_service, render_user_service
 
 
 def test_workspace_init_creates_fixed_layout(monkeypatch, tmp_path) -> None:
@@ -77,3 +77,45 @@ def test_user_service_unit_uses_workspace_and_amber_home(monkeypatch, tmp_path) 
 
     get_settings.cache_clear()
 
+
+def test_workspace_doctor_reports_codex_podman_prerequisites(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("AMBER_HOME", str(tmp_path / ".amber"))
+    get_settings.cache_clear()
+    init_workspace("indiedreamers")
+
+    def fake_which(command: str) -> str | None:
+        if command in {"podman", "slirp4netns"}:
+            return f"/usr/bin/{command}"
+        return None
+
+    def fake_run(command: list[str], **_kwargs) -> subprocess.CompletedProcess[str]:
+        if command[:3] == ["podman", "info", "--debug"]:
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout="host:\n  security:\n    rootless: true\n  cgroupVersion: v2\n",
+                stderr="",
+            )
+        if command[:3] == ["podman", "run", "--help"]:
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout="--userns --network --cgroups --memory --cpus --pids-limit\n",
+                stderr="",
+            )
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("src.config.workspace.shutil.which", fake_which)
+    monkeypatch.setattr("src.config.workspace.subprocess.run", fake_run)
+    monkeypatch.setattr("src.config.workspace._local_cgroup_v2_detail", lambda: (True, "/sys/fs/cgroup is cgroup2fs"))
+
+    checks = {check.name: check for check in doctor_workspace("indiedreamers", validate_external=True)}
+
+    assert checks["podman-info"].ok is True
+    assert checks["podman-rootless"].ok is True
+    assert checks["podman-cgroup-v2"].ok is True
+    assert checks["podman-network-helper"].ok is True
+    assert checks["podman-run-flags"].ok is True
+    assert checks["codex-resource-limits"].ok is True
+
+    get_settings.cache_clear()

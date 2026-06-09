@@ -511,6 +511,8 @@ class CodexAdapter(BaseAdapter):
                     "--pids-limit=512",
                 ]
             )
+        else:
+            args.append("--cgroups=disabled")
         args.extend(
             [
                 "--cap-drop=all",
@@ -543,16 +545,20 @@ class CodexAdapter(BaseAdapter):
         bootstrap_name = f"{self._container_name}-bootstrap"
         self._podman_success(["rm", "-f", bootstrap_name])
         self._progress("starting dependency bootstrap container")
-        self._run(
+        args = [
+            "run",
+            "-d",
+            "--name",
+            bootstrap_name,
+            "--userns=keep-id",
+            "--user",
+            "root",
+            "--network=slirp4netns",
+        ]
+        if not self._enforce_resource_limits:
+            args.append("--cgroups=disabled")
+        args.extend(
             [
-                "run",
-                "-d",
-                "--name",
-                bootstrap_name,
-                "--userns=keep-id",
-                "--user",
-                "root",
-                "--network=slirp4netns",
                 "-v",
                 f"{self._workdir}:/work:Z",
                 "-w",
@@ -563,6 +569,7 @@ class CodexAdapter(BaseAdapter):
                 "while true; do sleep 3600; done",
             ]
         )
+        self._run(args)
         try:
             self._progress("installing codex sandbox dependencies with apt")
             self._run(

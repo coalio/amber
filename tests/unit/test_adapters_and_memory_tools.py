@@ -386,6 +386,52 @@ def test_codex_adapter_updates_codex_cli_once() -> None:
     assert update_calls[0][:4] == ["podman", "exec", "--user", "root"]
 
 
+def test_codex_container_disables_cgroups_when_resource_limits_are_disabled(tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def command_runner(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        if command[-3:] == ["container", "exists", "codex-sandbox"]:
+            return subprocess.CompletedProcess(command, 1, stdout="", stderr="")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    adapter = CodexAdapter(
+        workdir=tmp_path / "work",
+        github_auth_dir=tmp_path / "github-auth",
+        codex_home_dir=tmp_path / "codex-home",
+        enforce_resource_limits=False,
+        command_runner=command_runner,
+    )
+
+    adapter._ensure_container()
+
+    run_call = next(call for call in calls if call[:3] == ["podman", "run", "-d"])
+    assert "--cgroups=disabled" in run_call
+    assert "--memory=4g" not in run_call
+    assert "--cpus=2" not in run_call
+    assert "--pids-limit=512" not in run_call
+
+
+def test_codex_dependency_bootstrap_disables_cgroups_when_resource_limits_are_disabled(tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def command_runner(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        if command[-3:] == ["image", "exists", "amber-codex-sandbox:ubuntu-24.04-codex-cli"]:
+            return subprocess.CompletedProcess(command, 1, stdout="", stderr="")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    adapter = CodexAdapter(workdir=tmp_path / "work", enforce_resource_limits=False, command_runner=command_runner)
+
+    adapter._ensure_dependency_image()
+
+    run_call = next(call for call in calls if call[:3] == ["podman", "run", "-d"])
+    assert "--cgroups=disabled" in run_call
+    assert "--memory=4g" not in run_call
+    assert "--cpus=2" not in run_call
+    assert "--pids-limit=512" not in run_call
+
+
 def test_codex_rules_skill_is_optional_for_read_only_tasks() -> None:
     adapter = CodexAdapter()
 

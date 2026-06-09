@@ -17,10 +17,10 @@ Amber currently expects a Linux user environment with:
 - A Telegram API ID and API hash from `my.telegram.org`.
 - An OpenAI API key.
 - A Linear API key.
-- Rootless Podman for the Codex sandbox used by work mode.
+- Rootless Podman for the Codex sandbox used by work mode, with cgroup v2 and `slirp4netns` available.
 - GitHub auth for the Codex sandbox if Amber should do repository work.
 
-The installer can set up the workspace and prompt for credentials, but it cannot create these external accounts for you.
+The installer checks local commands, rootless Podman, cgroup v2, `slirp4netns`, and required `podman run` flags before it downloads the Amber release. It can offer an interactive package install for missing system packages, but it will not modify system packages in non-interactive runs. It cannot create external accounts for you.
 
 ## Install
 
@@ -30,7 +30,7 @@ Run the installer with the workspace name you want to create:
 curl -fsSL https://raw.githubusercontent.com/coalio/amber/master/installer/install.sh | bash -s -- my-workspace
 ```
 
-This downloads the latest GitHub release, installs Amber under `~/.amber`, creates `~/.amber/workspaces/my-workspace`, runs interactive authentication, and asks whether to install the optional user service.
+This checks host prerequisites, downloads the latest GitHub release, installs Amber under `~/.amber`, creates `~/.amber/workspaces/my-workspace`, runs interactive authentication, and asks whether to install the optional user service.
 
 After install, the Amber binary is here:
 
@@ -123,6 +123,7 @@ Run `workspace doctor` after changing config or auth:
 
 - If `amber` is not found, use `~/.amber/bin/amber` or add `~/.amber/bin` to `PATH`.
 - If Telegram setup fails, rerun `~/.amber/bin/amber workspace configure my-workspace`.
+- If Codex setup fails before credential prompts, run `~/.amber/bin/amber workspace doctor my-workspace --external` and fix the failed Podman check. Amber can automatically retry the sandbox with `codex.enforce_resource_limits = false` when cgroup-backed resource limits are the blocker.
 - If Codex or GitHub auth fails, rerun workspace configuration from a real terminal so the sandbox can prompt interactively.
 - If the service does not start, check `~/.amber/bin/amber service status --workspace my-workspace` first, then inspect the workspace `logs/` directory.
 - If a release asset cannot be found, the installer did not find a compatible latest GitHub release for this platform.

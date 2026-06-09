@@ -125,15 +125,13 @@ def _version() -> int:
 
 def _configure_workspace(workspace: str | Path) -> int:
     from src.config.config import get_settings, workspace_dir
-    from src.config.workspace import doctor_workspace, load_workspace_config, render_toml
+    from src.config.workspace import doctor_workspace, load_workspace_config, write_workspace_config
 
     resolved = workspace_dir(workspace)
     config_path = resolved / "config.toml"
     if not config_path.exists():
         raise RuntimeError(f"Workspace config is missing. Run `amber workspace init {resolved.name}` first.")
 
-    # collect and persist credentials before validation so every external auth
-    # step reads from the same workspace-local config that runtime will use
     data = load_workspace_config(config_path)
     _ensure_section(data, "ai")
     _ensure_section(data, "telegram")
@@ -141,6 +139,13 @@ def _configure_workspace(workspace: str | Path) -> int:
     _ensure_section(data, "codex")
 
     print(f"Configuring Amber workspace: {resolved}")
+    try:
+        codex_adapter = _prepare_codex_sandbox_before_secrets(get_settings(resolved), data, config_path, resolved)
+    except RuntimeError as exc:
+        raise RuntimeError(_format_codex_setup_error(exc, resolved, credentials_saved=False)) from exc
+
+    # collect and persist credentials before auth validation so every external
+    # step reads from the same workspace-local config that runtime will use
     data["ai"]["api_key"] = _prompt_required_secret("AI/OpenAI API key", "AMBER_AI_API_KEY", data["ai"].get("api_key"))
     data["ai"]["model"] = _prompt_required("AI model", "AMBER_AI_MODEL", data["ai"].get("model"))
     data["telegram"]["api_id"] = _prompt_required("Telegram API ID", "API_ID", data["telegram"].get("api_id"))
@@ -153,9 +158,7 @@ def _configure_workspace(workspace: str | Path) -> int:
         "AMBER_CODEX_REASONING_EFFORT",
         data["codex"].get("reasoning_effort"),
     )
-    config_path.write_text(render_toml(data), encoding="utf-8")
-    config_path.chmod(0o600)
-    get_settings.cache_clear()
+    write_workspace_config(config_path, data)
 
     # validate the required integrations in runtime order so setup fails at the
     # first missing dependency instead of leaving a partially-working workspace
@@ -163,12 +166,64 @@ def _configure_workspace(workspace: str | Path) -> int:
     _validate_linear(settings.linear_api_key, settings.linear_api_url)
     asyncio.run(_validate_telegram(settings))
     try:
-        _configure_codex_cli(settings)
-        _configure_codex_github(settings)
+        _configure_codex_cli(settings, adapter=codex_adapter)
+        _configure_codex_github(settings, adapter=codex_adapter)
     except RuntimeError as exc:
         raise RuntimeError(_format_codex_setup_error(exc, resolved)) from exc
     checks = doctor_workspace(resolved, validate_external=True)
     return _print_checks(checks)
+
+
+def _prepare_codex_sandbox_before_secrets(settings: Any, data: dict[str, Any], config_path: Path, workspace: Path) -> Any:
+    from src.adapters.codex import build_codex_adapter
+    from src.config.workspace import write_workspace_config
+
+    try:
+        adapter = build_codex_adapter(
+            settings,
+            progress_callback=lambda message: print(f"[codex-preflight] {message}", flush=True),
+        )
+        adapter.ensure_app_server()
+        return adapter
+    except RuntimeError as exc:
+        if not settings.codex_enforce_resource_limits or not _looks_like_codex_resource_limit_failure(exc):
+            raise
+
+    print(
+        "codex preflight hit a Podman resource-limit/cgroup issue; retrying with Codex resource limits disabled.",
+        file=sys.stderr,
+    )
+    _ensure_section(data, "codex")
+    data["codex"]["enforce_resource_limits"] = False
+    write_workspace_config(config_path, data)
+    settings = _reload_workspace_settings(workspace)
+    adapter = build_codex_adapter(
+        settings,
+        progress_callback=lambda message: print(f"[codex-preflight-no-limits] {message}", flush=True),
+    )
+    adapter.ensure_app_server()
+    print("codex preflight ok; saved codex.enforce_resource_limits = false.", file=sys.stderr)
+    return adapter
+
+
+def _looks_like_codex_resource_limit_failure(exc: RuntimeError) -> bool:
+    message = str(exc).lower()
+    markers = (
+        "could not find cgroup mount",
+        "cgroup",
+        "--memory",
+        "--cpus",
+        "--pids-limit",
+        "resource limit",
+    )
+    return any(marker in message for marker in markers)
+
+
+def _reload_workspace_settings(workspace: Path) -> Any:
+    from src.config.config import get_settings
+
+    get_settings.cache_clear()
+    return get_settings(workspace)
 
 
 def _ensure_section(data: dict[str, Any], name: str) -> None:
@@ -257,11 +312,12 @@ async def _validate_telegram(settings: Any) -> None:
     print(f"telegram auth ok: {settings.telegram_session_path}")
 
 
-def _format_codex_setup_error(exc: RuntimeError, workspace: Path) -> str:
+def _format_codex_setup_error(exc: RuntimeError, workspace: Path, *, credentials_saved: bool = True) -> str:
     message = str(exc)
+    prefix = "Workspace credentials were saved, but " if credentials_saved else ""
     if 'could not find cgroup mount in "/proc/self/cgroup"' in message:
         return (
-            "Workspace credentials were saved, but Codex sandbox setup failed because Podman cannot access cgroups "
+            f"{prefix}Codex sandbox setup failed because Podman cannot access cgroups "
             "in this environment.\n"
             "Fix rootless Podman/cgroup support, then rerun:\n"
             f"  amber workspace configure {workspace}\n"
@@ -269,7 +325,7 @@ def _format_codex_setup_error(exc: RuntimeError, workspace: Path) -> str:
         )
     if message.startswith("Podman command failed"):
         return (
-            "Workspace credentials were saved, but Codex sandbox setup failed while running Podman.\n"
+            f"{prefix}Codex sandbox setup failed while running Podman.\n"
             "Fix the Podman error below, then rerun:\n"
             f"  amber workspace configure {workspace}\n"
             f"{message}"
@@ -277,10 +333,13 @@ def _format_codex_setup_error(exc: RuntimeError, workspace: Path) -> str:
     return message
 
 
-def _configure_codex_cli(settings: Any) -> None:
+def _configure_codex_cli(settings: Any, *, adapter: Any | None = None) -> None:
     from src.adapters.codex import build_codex_adapter, require_sandbox_success
 
-    adapter = build_codex_adapter(settings, progress_callback=lambda message: print(f"[codex-cli-auth] {message}", flush=True))
+    adapter = adapter or build_codex_adapter(
+        settings,
+        progress_callback=lambda message: print(f"[codex-cli-auth] {message}", flush=True),
+    )
     adapter.ensure_app_server()
     method = input("Codex CLI auth method [api-key/device/access-token] (api-key): ").strip().lower() or "api-key"
     if method == "device":
@@ -296,10 +355,13 @@ def _configure_codex_cli(settings: Any) -> None:
     require_sandbox_success(adapter, ["codex", "login", "status"], label="codex login status")
 
 
-def _configure_codex_github(settings: Any) -> None:
+def _configure_codex_github(settings: Any, *, adapter: Any | None = None) -> None:
     from src.adapters.codex import build_codex_adapter, require_sandbox_success
 
-    adapter = build_codex_adapter(settings, progress_callback=lambda message: print(f"[codex-github-auth] {message}", flush=True))
+    adapter = adapter or build_codex_adapter(
+        settings,
+        progress_callback=lambda message: print(f"[codex-github-auth] {message}", flush=True),
+    )
     adapter.ensure_app_server()
     token = _prompt_optional_secret("Codex sandbox GitHub token", "GH_TOKEN")
     if token:

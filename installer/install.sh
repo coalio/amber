@@ -10,6 +10,7 @@ RELEASE_URL="${AMBER_RELEASE_URL:-}"
 RELEASE_TAG="${AMBER_RELEASE_TAG:-}"
 TMP_PACKAGE="${AMBER_TMP_PACKAGE:-}"
 RECOVER_TMP_PACKAGE="${AMBER_RECOVER_TMP_PACKAGE:-ask}"
+INSTALL_FIX_SYSTEM="${AMBER_INSTALL_FIX_SYSTEM:-ask}"
 TTY="${AMBER_TTY:-/dev/tty}"
 
 if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-}" != "dumb" ]]; then
@@ -112,6 +113,280 @@ need_command() {
     error "Amber installer requires '$1' on PATH."
     exit 1
   fi
+}
+
+installer_is_interactive() {
+  [[ -r "$TTY" && -t 1 ]]
+}
+
+join_words() {
+  local word
+  local first=1
+  for word in "$@"; do
+    if (( first )); then
+      first=0
+    else
+      printf ' '
+    fi
+    printf '%s' "$word"
+  done
+}
+
+package_for_command() {
+  case "$1" in
+    curl)
+      printf 'curl'
+      ;;
+    tar)
+      printf 'tar'
+      ;;
+    find)
+      printf 'findutils'
+      ;;
+    grep)
+      printf 'grep'
+      ;;
+    sed)
+      printf 'sed'
+      ;;
+    podman)
+      printf 'podman'
+      ;;
+    slirp4netns)
+      printf 'slirp4netns'
+      ;;
+    *)
+      printf 'coreutils'
+      ;;
+  esac
+}
+
+unique_packages_for_commands() {
+  local command package seen packages=()
+  for command in "$@"; do
+    package="$(package_for_command "$command")"
+    seen=0
+    for existing in "${packages[@]}"; do
+      if [[ "$existing" == "$package" ]]; then
+        seen=1
+        break
+      fi
+    done
+    if (( ! seen )); then
+      packages+=("$package")
+    fi
+  done
+  printf '%s\n' "${packages[@]}"
+}
+
+system_install_command_text() {
+  local packages=("$@")
+  local package_text
+  package_text="$(join_words "${packages[@]}")"
+  if command -v apt-get >/dev/null 2>&1; then
+    if (( EUID == 0 )); then
+      printf 'apt-get update && apt-get install -y %s' "$package_text"
+    else
+      printf 'sudo apt-get update && sudo apt-get install -y %s' "$package_text"
+    fi
+    return 0
+  fi
+  if command -v dnf >/dev/null 2>&1; then
+    if (( EUID == 0 )); then
+      printf 'dnf install -y %s' "$package_text"
+    else
+      printf 'sudo dnf install -y %s' "$package_text"
+    fi
+    return 0
+  fi
+  if command -v pacman >/dev/null 2>&1; then
+    if (( EUID == 0 )); then
+      printf 'pacman -Sy --needed %s' "$package_text"
+    else
+      printf 'sudo pacman -Sy --needed %s' "$package_text"
+    fi
+    return 0
+  fi
+  return 1
+}
+
+run_system_install_command() {
+  local packages=("$@")
+  if command -v apt-get >/dev/null 2>&1; then
+    if (( EUID == 0 )); then
+      apt-get update && apt-get install -y "${packages[@]}"
+    else
+      sudo apt-get update && sudo apt-get install -y "${packages[@]}"
+    fi
+    return
+  fi
+  if command -v dnf >/dev/null 2>&1; then
+    if (( EUID == 0 )); then
+      dnf install -y "${packages[@]}"
+    else
+      sudo dnf install -y "${packages[@]}"
+    fi
+    return
+  fi
+  if command -v pacman >/dev/null 2>&1; then
+    if (( EUID == 0 )); then
+      pacman -Sy --needed "${packages[@]}"
+    else
+      sudo pacman -Sy --needed "${packages[@]}"
+    fi
+    return
+  fi
+  return 1
+}
+
+collect_missing_commands() {
+  local command
+  for command in "$@"; do
+    if ! command -v "$command" >/dev/null 2>&1; then
+      printf '%s\n' "$command"
+    fi
+  done
+}
+
+offer_system_package_fix() {
+  local missing_commands=("$@")
+  local packages=()
+  local package install_text answer mode
+  while IFS= read -r package; do
+    [[ -n "$package" ]] && packages+=("$package")
+  done < <(unique_packages_for_commands "${missing_commands[@]}")
+
+  if ! install_text="$(system_install_command_text "${packages[@]}")"; then
+    warn "Install missing prerequisites manually: $(join_words "${missing_commands[@]}")"
+    return 1
+  fi
+
+  warn "Missing required host commands: $(join_words "${missing_commands[@]}")"
+  warn "Install command:"
+  printf '  %s\n' "$install_text" >&2
+
+  mode="${INSTALL_FIX_SYSTEM,,}"
+  if ! installer_is_interactive; then
+    warn "Non-interactive install will not modify system packages."
+    return 1
+  fi
+  case "$mode" in
+    y|yes|1|true|auto)
+      ;;
+    n|no|0|false|off|never)
+      return 1
+      ;;
+    ""|ask)
+      answer=""
+      read -r -p "$(prompt_label "Run this system package command now? [y/N]"): " answer < "$TTY" || return 1
+      case "${answer,,}" in
+        y|yes|1|true)
+          ;;
+        *)
+          return 1
+          ;;
+      esac
+      ;;
+    *)
+      warn "Unknown AMBER_INSTALL_FIX_SYSTEM value '$INSTALL_FIX_SYSTEM'; not modifying system packages."
+      return 1
+      ;;
+  esac
+
+  run_system_install_command "${packages[@]}"
+}
+
+podman_info_output() {
+  local podman_executable="$1"
+  "$podman_executable" info --debug 2>&1
+}
+
+compact_lower() {
+  tr '[:upper:]' '[:lower:]' | tr -d '[:space:]'
+}
+
+podman_info_has_true() {
+  local output="$1"
+  local key="$2"
+  local compact
+  compact="$(printf '%s' "$output" | compact_lower)"
+  [[ "$compact" == *"\"${key}\":true"* || "$compact" == *"${key}:true"* ]]
+}
+
+podman_info_mentions() {
+  local output="$1"
+  local key="$2"
+  local value="$3"
+  local compact normalized_key
+  compact="$(printf '%s' "$output" | compact_lower)"
+  normalized_key="${key// /}"
+  [[ "$compact" == *"\"${normalized_key}\":\"${value}\""* || "$compact" == *"${normalized_key}:${value}"* ]]
+}
+
+local_cgroup_v2_ok() {
+  local fs_type
+  fs_type="$(stat -fc %T /sys/fs/cgroup 2>/dev/null || true)"
+  [[ "$fs_type" == "cgroup2fs" ]] || return 1
+  grep -q ' - cgroup2 ' /proc/self/mountinfo 2>/dev/null
+}
+
+preflight_installer() {
+  local required_commands=(
+    curl tar mktemp stat find grep sed head tr wc cp mv sort cat chmod ln rm mkdir sleep podman slirp4netns
+  )
+  local missing=()
+  local still_missing=()
+  local failures=()
+  local command podman_info podman_help flag
+  local required_podman_flags=(--userns --network --cgroups --memory --cpus --pids-limit)
+
+  info "Checking host prerequisites..."
+  while IFS= read -r command; do
+    [[ -n "$command" ]] && missing+=("$command")
+  done < <(collect_missing_commands "${required_commands[@]}")
+
+  if (( ${#missing[@]} )); then
+    offer_system_package_fix "${missing[@]}" || true
+    while IFS= read -r command; do
+      [[ -n "$command" ]] && still_missing+=("$command")
+    done < <(collect_missing_commands "${required_commands[@]}")
+    if (( ${#still_missing[@]} )); then
+      failures+=("Missing required host commands: $(join_words "${still_missing[@]}")")
+    fi
+  fi
+
+  if command -v podman >/dev/null 2>&1; then
+    if ! podman_info="$(podman_info_output podman)"; then
+      failures+=("podman info failed. Run 'podman info --debug' and fix the reported Podman error before installing Amber.")
+    else
+      if ! podman_info_has_true "$podman_info" "rootless"; then
+        failures+=("Podman must run rootless. Verify with: podman info --debug | grep -i rootless")
+      fi
+      if ! podman_info_mentions "$podman_info" "cgroupversion" "v2" \
+        && ! podman_info_mentions "$podman_info" "cgroup version" "v2"; then
+        failures+=("Podman must report cgroup v2. Verify with: podman info --debug | grep -i cgroup")
+      fi
+    fi
+    if ! local_cgroup_v2_ok; then
+      failures+=("The host must expose a cgroup v2 mount. Verify with: stat -fc %T /sys/fs/cgroup")
+    fi
+    if ! podman_help="$(podman run --help 2>&1)"; then
+      failures+=("podman run --help failed. Upgrade or repair Podman before installing Amber.")
+    else
+      for flag in "${required_podman_flags[@]}"; do
+        if [[ "$podman_help" != *"$flag"* ]]; then
+          failures+=("Podman is missing required run flag '$flag'. Upgrade Podman before installing Amber.")
+        fi
+      done
+    fi
+  fi
+
+  if (( ${#failures[@]} )); then
+    error "Amber installer preflight failed before downloading the release."
+    printf '%s\n' "${failures[@]/#/- }" >&2
+    exit 1
+  fi
+  success "Host prerequisites look ready"
 }
 
 prompt() {
@@ -465,6 +740,7 @@ maybe_install_service() {
 
 main() {
   heading "Amber"
+  preflight_installer
   install_release
   if [[ -z "$WORKSPACE_NAME" ]]; then
     WORKSPACE_NAME="$(prompt "Workspace name")"

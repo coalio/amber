@@ -124,7 +124,15 @@ def doctor_workspace(workspace: str | Path, *, validate_external: bool = False, 
         )
     )
     if podman_path and validate_external:
-        checks.append(_command_check("podman-rootless", [settings.codex_podman_executable, "info", "--format", "{{.Host.Security.Rootless}}"], expect="true"))
+        podman_info = _podman_info(settings.codex_podman_executable)
+        checks.append(_podman_info_check(podman_info))
+        checks.append(_podman_rootless_check(podman_info))
+        cgroup_check = _podman_cgroup_v2_check(podman_info)
+        checks.append(cgroup_check)
+        checks.append(_podman_network_helper_check())
+        run_flags_check = _podman_run_flags_check(settings.codex_podman_executable)
+        checks.append(run_flags_check)
+        checks.append(_codex_resource_limits_check(settings.codex_enforce_resource_limits, cgroup_check, run_flags_check))
 
     checks.append(_port_check(settings.codex_app_server_port, settings.codex_app_server_url))
     checks.append(
@@ -290,12 +298,121 @@ def _required_value_check(name: str, value: str | None) -> DoctorCheck:
     return DoctorCheck(name, bool(value), "configured" if value else "missing")
 
 
-def _command_check(name: str, command: list[str], *, expect: str | None = None) -> DoctorCheck:
-    result = subprocess.run(command, check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+def _podman_info(podman_executable: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [podman_executable, "info", "--debug"],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+
+def _podman_info_check(result: subprocess.CompletedProcess[str]) -> DoctorCheck:
     output = (result.stdout or result.stderr or "").strip()
-    ok = result.returncode == 0 and (expect is None or output.lower() == expect)
-    detail = output or ("ok" if ok else f"{' '.join(command)} exited {result.returncode}")
-    return DoctorCheck(name, ok, detail)
+    ok = result.returncode == 0
+    detail = "podman info completed" if ok else output or f"podman info exited {result.returncode}"
+    return DoctorCheck("podman-info", ok, detail)
+
+
+def _podman_rootless_check(result: subprocess.CompletedProcess[str]) -> DoctorCheck:
+    if result.returncode != 0:
+        return DoctorCheck("podman-rootless", False, "podman info did not complete")
+    output = result.stdout or result.stderr or ""
+    ok = _podman_info_has_true(output, "rootless")
+    return DoctorCheck("podman-rootless", ok, "rootless podman is enabled" if ok else "podman is not running rootless")
+
+
+def _podman_cgroup_v2_check(result: subprocess.CompletedProcess[str]) -> DoctorCheck:
+    local_ok, local_detail = _local_cgroup_v2_detail()
+    if result.returncode != 0:
+        return DoctorCheck("podman-cgroup-v2", False, f"podman info did not complete; {local_detail}")
+    output = result.stdout or result.stderr or ""
+    podman_ok = _podman_info_mentions(output, "cgroupversion", "v2") or _podman_info_mentions(output, "cgroup version", "v2")
+    ok = local_ok and podman_ok
+    if ok:
+        return DoctorCheck("podman-cgroup-v2", True, f"podman reports cgroup v2; {local_detail}")
+    if not local_ok:
+        return DoctorCheck("podman-cgroup-v2", False, local_detail)
+    return DoctorCheck("podman-cgroup-v2", False, "podman does not report cgroup v2")
+
+
+def _podman_network_helper_check() -> DoctorCheck:
+    path = shutil.which("slirp4netns")
+    return DoctorCheck(
+        "podman-network-helper",
+        path is not None,
+        f"found {path}" if path else "`slirp4netns` was not found on PATH",
+    )
+
+
+def _podman_run_flags_check(podman_executable: str) -> DoctorCheck:
+    result = subprocess.run(
+        [podman_executable, "run", "--help"],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    output = result.stdout or result.stderr or ""
+    required = ("--userns", "--network", "--cgroups", "--memory", "--cpus", "--pids-limit")
+    missing = [flag for flag in required if flag not in output]
+    ok = result.returncode == 0 and not missing
+    if ok:
+        return DoctorCheck("podman-run-flags", True, "podman run supports the required sandbox flags")
+    detail = ", ".join(missing) if missing else output.strip() or f"podman run --help exited {result.returncode}"
+    return DoctorCheck("podman-run-flags", False, f"missing required flags: {detail}")
+
+
+def _codex_resource_limits_check(
+    enforce_resource_limits: bool,
+    cgroup_check: DoctorCheck,
+    run_flags_check: DoctorCheck,
+) -> DoctorCheck:
+    if not enforce_resource_limits:
+        return DoctorCheck("codex-resource-limits", True, "resource limits disabled in codex config")
+    ok = cgroup_check.ok and run_flags_check.ok
+    detail = (
+        "resource limits enabled and cgroup v2 is available"
+        if ok
+        else "resource limits require working Podman cgroup v2 support; disable codex.enforce_resource_limits to bypass limits"
+    )
+    return DoctorCheck("codex-resource-limits", ok, detail)
+
+
+def _local_cgroup_v2_detail() -> tuple[bool, str]:
+    result = subprocess.run(
+        ["stat", "-fc", "%T", "/sys/fs/cgroup"],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    fs_type = (result.stdout or "").strip()
+    if result.returncode != 0:
+        detail = (result.stderr or "").strip() or "could not inspect /sys/fs/cgroup"
+        return False, detail
+    if fs_type != "cgroup2fs":
+        return False, f"/sys/fs/cgroup is {fs_type}, expected cgroup2fs"
+    try:
+        mountinfo = Path("/proc/self/mountinfo").read_text(encoding="utf-8")
+    except OSError as exc:
+        return False, f"could not read /proc/self/mountinfo: {exc}"
+    if " - cgroup2 " not in mountinfo:
+        return False, "/proc/self/mountinfo does not show a cgroup2 mount"
+    return True, "/sys/fs/cgroup is cgroup2fs"
+
+
+def _podman_info_has_true(output: str, key: str) -> bool:
+    compact = "".join(output.lower().split())
+    return f'"{key.lower()}":true' in compact or f"{key.lower()}:true" in compact
+
+
+def _podman_info_mentions(output: str, key: str, value: str) -> bool:
+    compact = "".join(output.lower().split())
+    normalized_key = key.lower().replace(" ", "")
+    normalized_value = value.lower()
+    return f'"{normalized_key}":"{normalized_value}"' in compact or f"{normalized_key}:{normalized_value}" in compact
 
 
 def _port_check(port: int, app_server_url: str) -> DoctorCheck:

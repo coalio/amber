@@ -1,1 +1,1 @@
-"""ModernBERT zero-shot scoring for Attention."""
+"""Attention scorer implementations."""

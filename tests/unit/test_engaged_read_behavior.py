@@ -279,6 +279,32 @@ def test_always_surface_sender_bypasses_attention_score(tmp_path) -> None:
     assert "always_surface_sender" in decisions[-1].payload.reasons
 
 
+def test_heuristic_only_attention_uses_heuristics_as_model_score(tmp_path) -> None:
+    state_store = GlobalStateStore(tmp_path / "runtime_state.json", "America/Managua")
+    attention_layer = AttentionLayer(
+        AttentionConfig(
+            surface_threshold=0.5,
+            urgent_threshold=1.0,
+            memory_limit=0,
+            disable_sleep_state=True,
+        ),
+        None,
+        state_store,
+        MemoryStore(tmp_path / "memories"),
+        MessageArchive.instance(),
+    )
+    decisions = []
+    EventBus.subscribe("AttentionDecisionMadeEvent", decisions.append)
+
+    attention_layer.handle_message(_telegram_received_event("amber, can you help with this?", message_id=412))
+
+    assert decisions
+    assert decisions[-1].payload.decision == "surface"
+    assert decisions[-1].payload.model_score == decisions[-1].payload.heuristic_score
+    assert decisions[-1].payload.classification is None
+    assert "direct_mention" in decisions[-1].payload.reasons
+
+
 def test_work_mode_discards_non_allowlisted_sender_even_when_directed(tmp_path) -> None:
     state_store = GlobalStateStore(tmp_path / "runtime_state.json", "America/Managua")
     attention_layer = AttentionLayer(

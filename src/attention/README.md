@@ -25,6 +25,6 @@ Attention should not write replies, build full model frames, or call the convers
 ## Common Changes
 
 - Tune thresholds in `src/config/config.default.toml` and `AttentionConfig`.
-- Change scoring behavior in `scoring/`.
+- Change scoring behavior in `scoring/`. The default runtime uses heuristic-only scoring; set `AMBER_ATTENTION_SCORER=modernbert` only when optional ML dependencies are installed.
 - Change memory retrieval in `memory/store.py`.
 - Keep policy reasons explicit in emitted attention decisions so failures are inspectable from logs.

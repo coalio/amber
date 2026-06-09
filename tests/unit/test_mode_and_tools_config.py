@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from src import runtime
 from src.ai.semantic.config import SemanticConfig
 from src.config.config import get_settings
 from src.receiver.linear.config import LinearReceiverConfig
@@ -50,3 +51,31 @@ def test_linear_polling_config_is_validated_by_settings(monkeypatch) -> None:
         get_settings()
 
     get_settings.cache_clear()
+
+
+def test_attention_scorer_defaults_to_heuristics(monkeypatch) -> None:
+    monkeypatch.delenv("AMBER_ATTENTION_SCORER", raising=False)
+
+    assert runtime._build_attention_scorer() is None
+
+
+def test_modernbert_attention_scorer_is_explicit_opt_in(monkeypatch) -> None:
+    class FakeScorer:
+        pass
+
+    class FakeModule:
+        AttentionPolicyScorer = FakeScorer
+
+    imported: list[str] = []
+
+    def fake_import_module(name: str):
+        imported.append(name)
+        return FakeModule
+
+    monkeypatch.setenv("AMBER_ATTENTION_SCORER", "modernbert")
+    monkeypatch.setattr(runtime.importlib, "import_module", fake_import_module)
+
+    scorer = runtime._build_attention_scorer()
+
+    assert isinstance(scorer, FakeScorer)
+    assert imported == ["src.attention.scoring.zero_shot"]

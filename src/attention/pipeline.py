@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from src.attention.config import AttentionConfig
 from src.attention.memory.store import MemoryStore
-from src.attention.scoring.zero_shot import AttentionModelClassification, AttentionPolicyScorer
+from src.attention.scoring.types import AttentionModelClassification
 from src.attention.sentiment.heuristics import compute_sentiment_delta
 from src.attention.utils import (
     contains_question_intent,
@@ -36,7 +36,7 @@ class AttentionLayer:
     def __init__(
         self,
         config: AttentionConfig,
-        scorer: AttentionPolicyScorer,
+        scorer: object | None,
         state_store: GlobalStateStore,
         memory_store: MemoryStore,
         message_archive: MessageArchive,
@@ -116,7 +116,13 @@ class AttentionLayer:
             "window_message_count": window_message_count,
         }
 
-    def _score_message(self, feature_row: dict[str, object]) -> tuple[float, AttentionModelClassification | None]:
+    def _score_message(
+        self,
+        feature_row: dict[str, object],
+        heuristic_score: float,
+    ) -> tuple[float, AttentionModelClassification | None]:
+        if self._scorer is None:
+            return heuristic_score, None
         classify = getattr(self._scorer, "classify", None)
         if callable(classify):
             classification = classify(feature_row)
@@ -221,7 +227,7 @@ class AttentionLayer:
                 )
                 return
             heuristics = self._heuristic_features(message)
-            model_score, classification = self._score_message(self._feature_row(message))
+            model_score, classification = self._score_message(self._feature_row(message), heuristics.heuristic_score)
             attention_score = min((heuristics.heuristic_score * 0.35) + (model_score * 0.65), 1.0)
             reasons = list(heuristics.reasons)
             if classification is not None:

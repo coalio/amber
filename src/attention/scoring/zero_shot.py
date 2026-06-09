@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 from collections import OrderedDict
-from dataclasses import dataclass
 from typing import Any
 
 from src.attention.constants import (
@@ -12,20 +11,7 @@ from src.attention.constants import (
     NEGATIVE_ATTENTION_LABELS,
     POSITIVE_ATTENTION_LABELS,
 )
-
-
-@dataclass(frozen=True)
-class AttentionModelClassification:
-    score: float
-    labels: dict[str, float]
-    top_labels: list[str]
-    tone: str
-    model_name: str
-    model_revision: str | None
-
-    @property
-    def reasons(self) -> list[str]:
-        return [f"modernbert:{label}" for label in self.top_labels[:3]]
+from src.attention.scoring.types import AttentionModelClassification
 
 
 class AttentionPolicyScorer:
@@ -90,7 +76,7 @@ class AttentionPolicyScorer:
         except ImportError as exc:
             raise RuntimeError(
                 "ModernBERT Attention scoring requires `torch` and `transformers`. "
-                "Install project requirements before running the live runtime."
+                "Install optional ML requirements with `pip install -r requirements-ml.txt`."
             ) from exc
         device = requested_device or os.getenv("AMBER_ATTENTION_DEVICE")
         if not device:

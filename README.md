@@ -22,6 +22,8 @@ Amber currently expects a Linux user environment with:
 
 The installer checks local commands, rootless Podman, cgroup v2, `slirp4netns`, and required `podman run` flags before it downloads the Amber release. It can offer an interactive package install for missing system packages, but it will not modify system packages in non-interactive runs. It cannot create external accounts for you.
 
+Amber uses lightweight heuristic attention scoring by default. The optional local ModernBERT scorer can run on CPU, but it requires Torch/Transformers and is intentionally excluded from the default install because those packages add gigabytes to the release.
+
 ## Install
 
 Run the installer with the workspace name you want to create:
@@ -124,6 +126,17 @@ Run `workspace doctor` after changing config or auth:
 ```bash
 ~/.amber/bin/amber workspace doctor my-workspace --external
 ```
+
+## Optional Local ML
+
+Source installs can enable the local ModernBERT attention scorer with:
+
+```bash
+pip install -r requirements-ml.txt
+AMBER_ATTENTION_SCORER=modernbert AMBER_ATTENTION_DEVICE=cpu python main.py run --workspace my-workspace
+```
+
+Default release binaries do not include this scorer. Maintainers can build a separate heavy ML release with `AMBER_BUILD_ML=1`.
 
 ## Troubleshooting
 

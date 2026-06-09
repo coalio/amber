@@ -20,6 +20,13 @@ python main.py --help
 
 For installed-release behavior, use the packaged `amber` binary instead.
 
+The local ModernBERT attention scorer is optional. Install it only when testing local ML scoring:
+
+```bash
+pip install -r requirements-ml.txt
+AMBER_ATTENTION_SCORER=modernbert AMBER_ATTENTION_DEVICE=cpu python main.py run --workspace my-workspace
+```
+
 ## Workspace Development
 
 Create and configure a local workspace:
@@ -59,6 +66,12 @@ scripts/build_release.sh
 ```
 
 The build writes `dist/amber-linux-x86_64.tar.gz` and a SHA256 file. If the archive is larger than the configured split size, the script also creates `dist/amber-linux-x86_64.tar.gz.part-*`.
+
+Default release builds exclude Torch, Transformers, CUDA/NVIDIA libraries, and related scientific packages. Build a separate heavy local-ML package with:
+
+```bash
+AMBER_BUILD_ML=1 scripts/build_release.sh
+```
 
 ## Installer Overrides
 

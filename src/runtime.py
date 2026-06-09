@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
+import os
 from dataclasses import dataclass
 
 from telethon import TelegramClient
@@ -18,7 +20,6 @@ from src.ai.semantic.layer import AILayer
 from src.attention.config import AttentionConfig
 from src.attention.memory.store import MemoryStore
 from src.attention.pipeline import AttentionLayer
-from src.attention.scoring.zero_shot import AttentionPolicyScorer
 from src.config.config import Settings, get_settings
 from src.context.config import ContextConfig
 from src.context.pipeline import ContextLayer
@@ -79,7 +80,7 @@ def build_application(
     *,
     settings: Settings | None = None,
     semantic_client: SemanticClient | None = None,
-    attention_scorer: AttentionPolicyScorer | None = None,
+    attention_scorer: object | None = None,
     transport: object | None = None,
     enable_telegram: bool = False,
 ) -> AmberApplication:
@@ -123,7 +124,7 @@ def build_application(
             poll_seconds=linear_config.poll_seconds,
             due_window_days=linear_config.due_window_days,
         )
-    scorer = attention_scorer or AttentionPolicyScorer()
+    scorer = _build_attention_scorer(attention_scorer)
     receiver = None
     telegram_client = None
     if transport is None:
@@ -185,3 +186,22 @@ def build_application(
         linear_receiver=linear_receiver,
         telegram_client=telegram_client,
     )
+
+
+def _build_attention_scorer(override: object | None = None) -> object | None:
+    if override is not None:
+        return override
+    mode = os.getenv("AMBER_ATTENTION_SCORER", "heuristic").strip().lower()
+    if mode in {"", "heuristic", "heuristics", "none", "off"}:
+        return None
+    if mode not in {"modernbert", "zero-shot", "zero_shot", "local-ml", "local_ml"}:
+        raise RuntimeError("AMBER_ATTENTION_SCORER must be heuristic or modernbert.")
+    try:
+        module = importlib.import_module("src.attention.scoring.zero_shot")
+        scorer_cls = getattr(module, "AttentionPolicyScorer")
+        return scorer_cls()
+    except (ImportError, ModuleNotFoundError) as exc:
+        raise RuntimeError(
+            "AMBER_ATTENTION_SCORER=modernbert requires optional ML dependencies. "
+            "Install them with `pip install -r requirements-ml.txt`, or use the default heuristic scorer."
+        ) from exc

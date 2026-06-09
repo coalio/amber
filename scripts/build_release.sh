@@ -8,6 +8,18 @@ BUILD_DIR="$ROOT/build"
 APP_NAME="amber"
 ASSET_NAME="${AMBER_ASSET_NAME:-amber-linux-x86_64.tar.gz}"
 SPLIT_SIZE="${AMBER_SPLIT_SIZE:-1900M}"
+BUILD_ML="${AMBER_BUILD_ML:-}"
+
+flag_enabled() {
+  case "${1,,}" in
+    y|yes|1|true|on)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
 
 if [[ ! -x "$PYTHON" ]]; then
   PYTHON="$(command -v python3.14 || command -v python3)"
@@ -21,14 +33,40 @@ fi
 cd "$ROOT"
 rm -rf "$BUILD_DIR/$APP_NAME" "$DIST_DIR/$APP_NAME" "$DIST_DIR/release" "$DIST_DIR/$ASSET_NAME" "$DIST_DIR/$ASSET_NAME".part-*
 
+PYINSTALLER_FLAGS=(
+  --noconfirm
+  --clean
+  --onedir
+  --name "$APP_NAME"
+  --exclude-module pytest
+  --exclude-module _pytest
+  --exclude-module tests
+)
+
+if flag_enabled "$BUILD_ML"; then
+  PYINSTALLER_FLAGS+=(--hidden-import src.attention.scoring.zero_shot)
+else
+  PYINSTALLER_FLAGS+=(
+    --exclude-module torch
+    --exclude-module transformers
+    --exclude-module safetensors
+    --exclude-module tokenizers
+    --exclude-module huggingface_hub
+    --exclude-module hf_xet
+    --exclude-module nvidia
+    --exclude-module triton
+    --exclude-module cuda
+    --exclude-module numpy
+    --exclude-module pandas
+    --exclude-module scipy
+    --exclude-module sklearn
+    --exclude-module joblib
+    --exclude-module threadpoolctl
+  )
+fi
+
 "$PYTHON" -m PyInstaller \
-  --noconfirm \
-  --clean \
-  --onedir \
-  --name "$APP_NAME" \
-  --exclude-module pytest \
-  --exclude-module _pytest \
-  --exclude-module tests \
+  "${PYINSTALLER_FLAGS[@]}" \
   main.py
 
 STAGING="$DIST_DIR/release/$APP_NAME"

@@ -54,6 +54,59 @@ prompt_label() {
   printf '%b%s%b' "$COLOR_BOLD" "$1" "$COLOR_RESET"
 }
 
+progress_enabled() {
+  [[ -t 2 && "${TERM:-}" != "dumb" ]]
+}
+
+progress_percent() {
+  local current="$1"
+  local total="$2"
+  if (( total <= 0 )); then
+    printf '0'
+  elif (( current >= total )); then
+    printf '100'
+  else
+    printf '%d' $((current * 100 / total))
+  fi
+}
+
+draw_progress_bar() {
+  local label="$1"
+  local current="$2"
+  local total="$3"
+  local width=28
+  local percent filled empty
+  percent="$(progress_percent "$current" "$total")"
+  filled=$((percent * width / 100))
+  empty=$((width - filled))
+  printf '\r%b==>%b %s [' "$COLOR_BLUE" "$COLOR_RESET" "$label" >&2
+  printf '%*s' "$filled" '' | tr ' ' '#' >&2
+  printf '%*s' "$empty" '' | tr ' ' '-' >&2
+  printf '] %3d%%' "$percent" >&2
+}
+
+draw_activity_bar() {
+  local label="$1"
+  local step="$2"
+  local width=28
+  local pos=$((step % width))
+  local index=0
+  printf '\r%b==>%b %s [' "$COLOR_BLUE" "$COLOR_RESET" "$label" >&2
+  while (( index < width )); do
+    if (( index == pos )); then
+      printf '#' >&2
+    else
+      printf '-' >&2
+    fi
+    index=$((index + 1))
+  done
+  printf ']' >&2
+}
+
+finish_progress() {
+  printf '\n' >&2
+}
+
 need_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
     error "Amber installer requires '$1' on PATH."
@@ -116,6 +169,74 @@ curl_download() {
 file_size() {
   local path="$1"
   stat -c%s "$path" 2>/dev/null || wc -c < "$path"
+}
+
+copy_with_progress() {
+  local source="$1"
+  local destination="$2"
+  local label="$3"
+  local current=0
+  local total
+  local pid
+  local status
+
+  if ! progress_enabled; then
+    info "$label..."
+    cp "$source" "$destination"
+    return
+  fi
+
+  total="$(file_size "$source")"
+  cp "$source" "$destination" &
+  pid="$!"
+  while kill -0 "$pid" >/dev/null 2>&1; do
+    if [[ -f "$destination" ]]; then
+      current="$(file_size "$destination")"
+    fi
+    draw_progress_bar "$label" "$current" "$total"
+    sleep 0.2
+  done
+  if wait "$pid"; then
+    status=0
+  else
+    status="$?"
+  fi
+  if [[ -f "$destination" ]]; then
+    current="$(file_size "$destination")"
+  fi
+  draw_progress_bar "$label" "$current" "$total"
+  finish_progress
+  return "$status"
+}
+
+run_with_activity_progress() {
+  local label="$1"
+  shift
+  local pid
+  local status
+  local step=0
+
+  if ! progress_enabled; then
+    info "$label..."
+    "$@"
+    return
+  fi
+
+  "$@" &
+  pid="$!"
+  while kill -0 "$pid" >/dev/null 2>&1; do
+    draw_activity_bar "$label" "$step"
+    step=$((step + 1))
+    sleep 0.2
+  done
+  if wait "$pid"; then
+    status=0
+  else
+    status="$?"
+  fi
+  draw_progress_bar "$label" 1 1
+  finish_progress
+  return "$status"
 }
 
 confirm_tmp_package_recovery() {
@@ -194,7 +315,7 @@ copy_archive_to_cache() {
   local source="$1"
   local destination="$2"
   mkdir -p "${destination%/*}"
-  cp "$source" "$destination.tmp"
+  copy_with_progress "$source" "$destination.tmp" "Caching Amber package"
   mv "$destination.tmp" "$destination"
 }
 
@@ -258,7 +379,7 @@ install_release() {
   # cache normal github release downloads by tag and asset name
   if [[ -n "$RELEASE_ARCHIVE" ]]; then
     info "Installing Amber $tag from $RELEASE_ARCHIVE..."
-    cp "$RELEASE_ARCHIVE" "$archive"
+    archive="$RELEASE_ARCHIVE"
   elif [[ -n "$RELEASE_URL" ]]; then
     info "Downloading Amber $tag from $RELEASE_URL..."
     curl_download "$url" "$archive"
@@ -289,11 +410,11 @@ install_release() {
 
   # replace the selected release while preserving workspaces and old cached packages
   mkdir -p "$release_tmp" "$AMBER_HOME/releases" "$AMBER_HOME/bin" "$AMBER_HOME/workspaces"
-  tar -xzf "$archive" -C "$release_tmp"
+  run_with_activity_progress "Extracting Amber $tag" tar -xzf "$archive" -C "$release_tmp"
 
   rm -rf "$release_dir"
   mkdir -p "$release_dir"
-  cp -a "$release_tmp/." "$release_dir/"
+  run_with_activity_progress "Installing Amber $tag" cp -a "$release_tmp/." "$release_dir/"
   chmod +x "$release_dir/amber"
 
   ln -sfn "$tag" "$AMBER_HOME/releases/current"

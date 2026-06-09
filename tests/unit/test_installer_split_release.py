@@ -195,6 +195,7 @@ def test_installer_reuses_cached_release_archive(tmp_path: Path) -> None:
     assert second.returncode == 0, second.stdout + second.stderr
     assert "Downloading Amber v0.2.0 from coalio/amber..." in first.stdout
     assert "Reusing downloaded Amber v0.2.0 package" in second.stdout
+    assert "Extracting Amber v0.2.0..." in second.stdout
     assert (amber_home / "packages" / "v0.2.0" / "amber-linux-x86_64.tar.gz").exists()
     assert curl_log.read_text(encoding="utf-8").splitlines() == [
         "https://api.github.com/repos/coalio/amber/releases/latest",
@@ -288,6 +289,8 @@ def test_installer_recovers_tmp_release_archive_before_download(tmp_path: Path) 
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Recovering downloaded Amber v0.3.0 package from" in result.stdout
+    assert "Caching Amber package..." in result.stdout
+    assert "Extracting Amber v0.3.0..." in result.stdout
     assert (amber_home / "packages" / "v0.3.0" / "amber-linux-x86_64.tar.gz").exists()
     assert curl_log.read_text(encoding="utf-8").splitlines() == [
         "https://api.github.com/repos/coalio/amber/releases/latest",

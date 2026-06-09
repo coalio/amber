@@ -464,7 +464,7 @@ maybe_install_service() {
 }
 
 main() {
-  heading "Amber installer"
+  heading "Amber"
   install_release
   if [[ -z "$WORKSPACE_NAME" ]]; then
     WORKSPACE_NAME="$(prompt "Workspace name")"

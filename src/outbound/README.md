@@ -9,6 +9,8 @@ Outbound preparation turns Amber's approved reply text into delivery-ready Teleg
 - Split long output into chunks while preserving code blocks.
 - Preserve reply target and visible-read metadata from the semantic decision.
 
+Generally, any sort of outbound wrangling belongs to this layer.
+
 ## Event Boundaries
 
 Input:

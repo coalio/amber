@@ -8,25 +8,18 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from telethon import TelegramClient
-
-from src.adapters.codex import build_codex_adapter, require_sandbox_success
-from src.adapters.linear import LinearGraphQLClient
-from src.config.config import get_settings, workspace_dir
-from src.config.workspace import (
-    doctor_workspace,
-    init_workspace,
-    install_user_service,
-    load_workspace_config,
-    render_toml,
-    service_unit_name,
-    uninstall_user_service,
-)
 from src.cli_input import read_masked_secret
-from src.runtime import build_application
 
 
 def main(argv: list[str] | None = None) -> int:
+    try:
+        return _main(argv)
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+
+def _main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
     if args.command is None and args.workspace:
@@ -78,6 +71,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _run(args: argparse.Namespace) -> int:
+    from src.config.config import get_settings
+    from src.runtime import build_application
+
     settings = get_settings(args.workspace)
     app = build_application(settings=settings, enable_telegram=True)
     asyncio.run(app.run_telegram_forever())
@@ -85,6 +81,8 @@ def _run(args: argparse.Namespace) -> int:
 
 
 def _workspace(args: argparse.Namespace) -> int:
+    from src.config.workspace import doctor_workspace, init_workspace
+
     if args.workspace_command == "init":
         path = init_workspace(args.name, overwrite=args.overwrite)
         print(f"workspace created: {path}")
@@ -98,6 +96,8 @@ def _workspace(args: argparse.Namespace) -> int:
 
 
 def _service(args: argparse.Namespace) -> int:
+    from src.config.workspace import install_user_service, service_unit_name, uninstall_user_service
+
     unit_name = service_unit_name(args.workspace)
     if args.service_command == "install":
         path = install_user_service(args.workspace, enable=args.enable or args.now, now=args.now)
@@ -114,6 +114,8 @@ def _service(args: argparse.Namespace) -> int:
 
 
 def _version() -> int:
+    from src.config.config import get_settings
+
     settings = get_settings()
     print(f"amber release: {settings.release_dir.name}")
     print(f"release dir: {settings.release_dir}")
@@ -122,6 +124,9 @@ def _version() -> int:
 
 
 def _configure_workspace(workspace: str | Path) -> int:
+    from src.config.config import get_settings, workspace_dir
+    from src.config.workspace import doctor_workspace, load_workspace_config, render_toml
+
     resolved = workspace_dir(workspace)
     config_path = resolved / "config.toml"
     if not config_path.exists():
@@ -157,8 +162,11 @@ def _configure_workspace(workspace: str | Path) -> int:
     settings = get_settings(resolved)
     _validate_linear(settings.linear_api_key, settings.linear_api_url)
     asyncio.run(_validate_telegram(settings))
-    _configure_codex_cli(settings)
-    _configure_codex_github(settings)
+    try:
+        _configure_codex_cli(settings)
+        _configure_codex_github(settings)
+    except RuntimeError as exc:
+        raise RuntimeError(_format_codex_setup_error(exc, resolved)) from exc
     checks = doctor_workspace(resolved, validate_external=True)
     return _print_checks(checks)
 
@@ -225,6 +233,8 @@ def _masked(value: str) -> str:
 
 
 def _validate_linear(api_key: str | None, api_url: str) -> None:
+    from src.adapters.linear import LinearGraphQLClient
+
     if not api_key:
         raise RuntimeError("Linear API key is required.")
     viewer_id = LinearGraphQLClient(api_key=api_key, api_url=api_url).viewer_id()
@@ -232,6 +242,8 @@ def _validate_linear(api_key: str | None, api_url: str) -> None:
 
 
 async def _validate_telegram(settings: Any) -> None:
+    from telethon import TelegramClient
+
     if not settings.telegram_api_id or not settings.telegram_api_hash:
         raise RuntimeError("Telegram API ID and hash are required.")
     settings.telegram_session_path.parent.mkdir(parents=True, exist_ok=True)
@@ -245,7 +257,29 @@ async def _validate_telegram(settings: Any) -> None:
     print(f"telegram auth ok: {settings.telegram_session_path}")
 
 
+def _format_codex_setup_error(exc: RuntimeError, workspace: Path) -> str:
+    message = str(exc)
+    if 'could not find cgroup mount in "/proc/self/cgroup"' in message:
+        return (
+            "Workspace credentials were saved, but Codex sandbox setup failed because Podman cannot access cgroups "
+            "in this environment.\n"
+            "Fix rootless Podman/cgroup support, then rerun:\n"
+            f"  amber workspace configure {workspace}\n"
+            'Original Podman error: could not find cgroup mount in "/proc/self/cgroup"'
+        )
+    if message.startswith("Podman command failed"):
+        return (
+            "Workspace credentials were saved, but Codex sandbox setup failed while running Podman.\n"
+            "Fix the Podman error below, then rerun:\n"
+            f"  amber workspace configure {workspace}\n"
+            f"{message}"
+        )
+    return message
+
+
 def _configure_codex_cli(settings: Any) -> None:
+    from src.adapters.codex import build_codex_adapter, require_sandbox_success
+
     adapter = build_codex_adapter(settings, progress_callback=lambda message: print(f"[codex-cli-auth] {message}", flush=True))
     adapter.ensure_app_server()
     method = input("Codex CLI auth method [api-key/device/access-token] (api-key): ").strip().lower() or "api-key"
@@ -263,6 +297,8 @@ def _configure_codex_cli(settings: Any) -> None:
 
 
 def _configure_codex_github(settings: Any) -> None:
+    from src.adapters.codex import build_codex_adapter, require_sandbox_success
+
     adapter = build_codex_adapter(settings, progress_callback=lambda message: print(f"[codex-github-auth] {message}", flush=True))
     adapter.ensure_app_server()
     token = _prompt_optional_secret("Codex sandbox GitHub token", "GH_TOKEN")

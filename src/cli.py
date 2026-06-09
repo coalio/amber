@@ -186,24 +186,35 @@ def _prepare_codex_sandbox_before_secrets(settings: Any, data: dict[str, Any], c
         adapter.ensure_app_server()
         return adapter
     except RuntimeError as exc:
-        if not settings.codex_enforce_resource_limits or not _looks_like_codex_resource_limit_failure(exc):
+        if not _should_retry_codex_cgroup_fallback(settings, exc):
             raise
 
     print(
-        "codex preflight hit a Podman resource-limit/cgroup issue; retrying with Codex resource limits disabled.",
+        "codex preflight hit a Podman cgroup issue; retrying with Podman cgroupfs and Codex resource limits disabled.",
         file=sys.stderr,
     )
     _ensure_section(data, "codex")
     data["codex"]["enforce_resource_limits"] = False
+    data["codex"]["podman_cgroup_manager"] = "cgroupfs"
     write_workspace_config(config_path, data)
     settings = _reload_workspace_settings(workspace)
     adapter = build_codex_adapter(
         settings,
-        progress_callback=lambda message: print(f"[codex-preflight-no-limits] {message}", flush=True),
+        progress_callback=lambda message: print(f"[codex-preflight-cgroupfs] {message}", flush=True),
     )
     adapter.ensure_app_server()
-    print("codex preflight ok; saved codex.enforce_resource_limits = false.", file=sys.stderr)
+    print(
+        "codex preflight ok; saved codex.podman_cgroup_manager = cgroupfs and codex.enforce_resource_limits = false.",
+        file=sys.stderr,
+    )
     return adapter
+
+
+def _should_retry_codex_cgroup_fallback(settings: Any, exc: RuntimeError) -> bool:
+    if not _looks_like_codex_resource_limit_failure(exc):
+        return False
+    cgroup_manager = str(getattr(settings, "codex_podman_cgroup_manager", "") or "").strip().lower()
+    return bool(getattr(settings, "codex_enforce_resource_limits", True)) or cgroup_manager != "cgroupfs"
 
 
 def _looks_like_codex_resource_limit_failure(exc: RuntimeError) -> bool:
@@ -215,6 +226,10 @@ def _looks_like_codex_resource_limit_failure(exc: RuntimeError) -> bool:
         "--cpus",
         "--pids-limit",
         "resource limit",
+        "interactive authentication required",
+        "unable to apply cgroup configuration",
+        "not compatible with nocgroups",
+        "nocgroups",
     )
     return any(marker in message for marker in markers)
 
@@ -319,9 +334,18 @@ def _format_codex_setup_error(exc: RuntimeError, workspace: Path, *, credentials
         return (
             f"{prefix}Codex sandbox setup failed because Podman cannot access cgroups "
             "in this environment.\n"
-            "Fix rootless Podman/cgroup support, then rerun:\n"
+            "Rerun the installer with AMBER_CODEX_FIX_CGROUPS=1, or set "
+            'codex.podman_cgroup_manager = "cgroupfs" and codex.enforce_resource_limits = false, then rerun:\n'
             f"  amber workspace configure {workspace}\n"
             'Original Podman error: could not find cgroup mount in "/proc/self/cgroup"'
+        )
+    if "not compatible with nocgroups" in message.lower() or "interactive authentication required" in message.lower():
+        return (
+            f"{prefix}Codex sandbox setup failed because Podman rejected the current rootless cgroup mode.\n"
+            "Rerun the installer with AMBER_CODEX_FIX_CGROUPS=1, or set "
+            'codex.podman_cgroup_manager = "cgroupfs" and codex.enforce_resource_limits = false, then rerun:\n'
+            f"  amber workspace configure {workspace}\n"
+            f"{message}"
         )
     if message.startswith("Podman command failed"):
         return (

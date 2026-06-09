@@ -60,13 +60,14 @@ def test_workspace_configure_checks_codex_before_secret_prompts(monkeypatch, tmp
 def test_codex_preflight_retries_with_resource_limits_disabled(monkeypatch, tmp_path: Path) -> None:
     config_path = tmp_path / "config.toml"
     data = {"codex": {"enforce_resource_limits": True}}
-    attempts: list[bool] = []
-    enabled = SimpleNamespace(codex_enforce_resource_limits=True)
-    disabled = SimpleNamespace(codex_enforce_resource_limits=False)
+    attempts: list[tuple[bool, str | None]] = []
+    enabled = SimpleNamespace(codex_enforce_resource_limits=True, codex_podman_cgroup_manager=None)
+    disabled = SimpleNamespace(codex_enforce_resource_limits=False, codex_podman_cgroup_manager="cgroupfs")
 
     class FakeAdapter:
-        def __init__(self, enforce_resource_limits: bool) -> None:
+        def __init__(self, enforce_resource_limits: bool, cgroup_manager: str | None) -> None:
             self._enforce_resource_limits = enforce_resource_limits
+            self._cgroup_manager = cgroup_manager
 
         def ensure_app_server(self) -> None:
             if self._enforce_resource_limits:
@@ -75,8 +76,8 @@ def test_codex_preflight_retries_with_resource_limits_disabled(monkeypatch, tmp_
                 )
 
     def fake_build(settings, **_kwargs):
-        attempts.append(settings.codex_enforce_resource_limits)
-        return FakeAdapter(settings.codex_enforce_resource_limits)
+        attempts.append((settings.codex_enforce_resource_limits, settings.codex_podman_cgroup_manager))
+        return FakeAdapter(settings.codex_enforce_resource_limits, settings.codex_podman_cgroup_manager)
 
     monkeypatch.setattr(src.adapters.codex, "build_codex_adapter", fake_build)
     monkeypatch.setattr(cli, "_reload_workspace_settings", lambda _workspace: disabled)
@@ -85,6 +86,9 @@ def test_codex_preflight_retries_with_resource_limits_disabled(monkeypatch, tmp_
 
     assert isinstance(result, FakeAdapter)
     assert result._enforce_resource_limits is False
-    assert attempts == [True, False]
+    assert result._cgroup_manager == "cgroupfs"
+    assert attempts == [(True, None), (False, "cgroupfs")]
     assert data["codex"]["enforce_resource_limits"] is False
+    assert data["codex"]["podman_cgroup_manager"] == "cgroupfs"
     assert "enforce_resource_limits = false" in config_path.read_text(encoding="utf-8")
+    assert 'podman_cgroup_manager = "cgroupfs"' in config_path.read_text(encoding="utf-8")

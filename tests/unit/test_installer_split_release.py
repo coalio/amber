@@ -391,6 +391,94 @@ def test_installer_recovers_tmp_release_archive_before_download(tmp_path: Path) 
     ]
 
 
+def test_installer_applies_codex_cgroup_fallback_when_cgroupfs_probe_passes(tmp_path: Path) -> None:
+    archive = _make_release_archive(tmp_path)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _write_executable(
+        fake_bin / "podman",
+        """
+        #!/usr/bin/env bash
+        set -euo pipefail
+        if [[ "${1:-}" == "info" && "${2:-}" == "--debug" ]]; then
+          cat <<'INFO'
+        host:
+          cgroupManager: systemd
+          cgroupVersion: v2
+          kernel: 6.6.87.2-microsoft-standard-WSL2
+          security:
+            rootless: true
+        INFO
+          exit 0
+        fi
+        if [[ "${1:-}" == "run" && "${2:-}" == "--help" ]]; then
+          printf '%s\\n' '--userns --network --memory --cpus --pids-limit'
+          exit 0
+        fi
+        if [[ "${1:-}" == "image" && "${2:-}" == "exists" ]]; then
+          exit 0
+        fi
+        if [[ "${1:-}" == "--cgroup-manager=cgroupfs" && "${2:-}" == "run" ]]; then
+          exit 0
+        fi
+        if [[ "${1:-}" == "run" ]]; then
+          echo "Error: Interactive authentication required" >&2
+          exit 125
+        fi
+        exit 0
+        """,
+    )
+    _write_executable(
+        fake_bin / "slirp4netns",
+        """
+        #!/usr/bin/env bash
+        exit 0
+        """,
+    )
+    tty = tmp_path / "tty"
+    tty.write_text("", encoding="utf-8")
+    fake_log = tmp_path / "amber.log"
+    env_log = tmp_path / "env.log"
+    amber_home = tmp_path / ".amber"
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "AMBER_CODEX_FIX_CGROUPS": "yes",
+            "AMBER_FAKE_ENV_LOG": str(env_log),
+            "AMBER_FAKE_LOG": str(fake_log),
+            "AMBER_HOME": str(amber_home),
+            "AMBER_INSTALL_SERVICE": "n",
+            "AMBER_RELEASE_ARCHIVE": str(archive),
+            "AMBER_RELEASE_TAG": "local",
+            "AMBER_TTY": str(tty),
+            "PATH": f"{fake_bin}:{env['PATH']}",
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", "installer/install.sh", "indiedreamers"],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Applying Amber workspace Podman fallback..." in result.stdout
+    config = (amber_home / "workspaces" / "indiedreamers" / "config.toml").read_text(encoding="utf-8")
+    assert 'podman_cgroup_manager = "cgroupfs"' in config
+    assert "enforce_resource_limits = false" in config
+    assert env_log.read_text(encoding="utf-8").splitlines() == [
+        "AMBER_CODEX_CGROUP_MANAGER=cgroupfs",
+        "AMBER_CODEX_ENFORCE_RESOURCE_LIMITS=false",
+    ]
+
+
 def test_installer_preflight_fails_before_release_lookup_when_podman_is_broken(tmp_path: Path) -> None:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -462,6 +550,19 @@ def _make_release_archive(tmp_path: Path) -> Path:
             #!/usr/bin/env bash
             set -euo pipefail
             printf '%s\\n' "$*" >> "$AMBER_FAKE_LOG"
+            if [[ "${1:-}" == "workspace" && "${2:-}" == "init" ]]; then
+              workspace="${3:?workspace name required}"
+              mkdir -p "$AMBER_HOME/workspaces/$workspace"
+              cat > "$AMBER_HOME/workspaces/$workspace/config.toml" <<'CONFIG'
+            [codex]
+            podman_cgroup_manager = "none"
+            enforce_resource_limits = true
+            CONFIG
+            fi
+            if [[ "${1:-}" == "workspace" && "${2:-}" == "configure" && -n "${AMBER_FAKE_ENV_LOG:-}" ]]; then
+              printf 'AMBER_CODEX_CGROUP_MANAGER=%s\\n' "${AMBER_CODEX_CGROUP_MANAGER:-}" >> "$AMBER_FAKE_ENV_LOG"
+              printf 'AMBER_CODEX_ENFORCE_RESOURCE_LIMITS=%s\\n' "${AMBER_CODEX_ENFORCE_RESOURCE_LIMITS:-}" >> "$AMBER_FAKE_ENV_LOG"
+            fi
             """
         ),
         encoding="utf-8",

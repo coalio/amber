@@ -355,7 +355,7 @@ def _podman_run_flags_check(podman_executable: str) -> DoctorCheck:
         stderr=subprocess.PIPE,
     )
     output = result.stdout or result.stderr or ""
-    required = ("--userns", "--network", "--cgroups", "--memory", "--cpus", "--pids-limit")
+    required = ("--userns", "--network", "--memory", "--cpus", "--pids-limit")
     missing = [flag for flag in required if flag not in output]
     ok = result.returncode == 0 and not missing
     if ok:

@@ -5,6 +5,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
+import src.adapters.codex.adapter as codex_adapter_module
 from src.adapters.codex import app_server as codex_app_server
 from src.adapters.base import BaseAdapter
 from src.adapters.codex import CodexAdapter, CodexNotification, CodexPullRequestEvent, CodexQuestion, CodexTaskCompleted
@@ -386,7 +387,7 @@ def test_codex_adapter_updates_codex_cli_once() -> None:
     assert update_calls[0][:4] == ["podman", "exec", "--user", "root"]
 
 
-def test_codex_container_disables_cgroups_when_resource_limits_are_disabled(tmp_path: Path) -> None:
+def test_codex_container_omits_resource_flags_when_limits_are_disabled(tmp_path: Path) -> None:
     calls: list[list[str]] = []
 
     def command_runner(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
@@ -406,13 +407,13 @@ def test_codex_container_disables_cgroups_when_resource_limits_are_disabled(tmp_
     adapter._ensure_container()
 
     run_call = next(call for call in calls if call[:3] == ["podman", "run", "-d"])
-    assert "--cgroups=disabled" in run_call
+    assert "--cgroups=disabled" not in run_call
     assert "--memory=4g" not in run_call
     assert "--cpus=2" not in run_call
     assert "--pids-limit=512" not in run_call
 
 
-def test_codex_dependency_bootstrap_disables_cgroups_when_resource_limits_are_disabled(tmp_path: Path) -> None:
+def test_codex_dependency_bootstrap_omits_cgroup_mode_when_limits_are_disabled(tmp_path: Path) -> None:
     calls: list[list[str]] = []
 
     def command_runner(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
@@ -426,10 +427,26 @@ def test_codex_dependency_bootstrap_disables_cgroups_when_resource_limits_are_di
     adapter._ensure_dependency_image()
 
     run_call = next(call for call in calls if call[:3] == ["podman", "run", "-d"])
-    assert "--cgroups=disabled" in run_call
+    assert "--cgroups=disabled" not in run_call
     assert "--memory=4g" not in run_call
     assert "--cpus=2" not in run_call
     assert "--pids-limit=512" not in run_call
+
+
+def test_codex_adapter_finds_packaged_app_server_resource(monkeypatch, tmp_path: Path) -> None:
+    module_dir = tmp_path / "_internal" / "src" / "adapters" / "codex"
+    module_dir.mkdir(parents=True)
+    release_dir = tmp_path / "release"
+    packaged_script = release_dir / "resources" / "codex" / "app_server.py"
+    packaged_script.parent.mkdir(parents=True)
+    packaged_script.write_text("print('app server')\n", encoding="utf-8")
+
+    monkeypatch.setattr(codex_adapter_module, "__file__", str(module_dir / "adapter.py"))
+    monkeypatch.setattr(codex_adapter_module.sys, "executable", str(release_dir / "amber"))
+
+    adapter = CodexAdapter()
+
+    assert adapter._app_server_script_source() == packaged_script
 
 
 def test_codex_rules_skill_is_optional_for_read_only_tasks() -> None:

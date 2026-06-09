@@ -12,6 +12,9 @@ TMP_PACKAGE="${AMBER_TMP_PACKAGE:-}"
 RECOVER_TMP_PACKAGE="${AMBER_RECOVER_TMP_PACKAGE:-ask}"
 INSTALL_FIX_SYSTEM="${AMBER_INSTALL_FIX_SYSTEM:-ask}"
 INSTALL_NO_CACHE="${AMBER_INSTALL_NO_CACHE:-${AMBER_NO_CACHE:-}}"
+CODEX_FIX_CGROUPS="${AMBER_CODEX_FIX_CGROUPS:-ask}"
+CODEX_CGROUP_MANAGER_OVERRIDE=""
+CODEX_ENFORCE_RESOURCE_LIMITS_OVERRIDE=""
 TTY="${AMBER_TTY:-/dev/tty}"
 
 if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-}" != "dumb" ]]; then
@@ -335,6 +338,15 @@ podman_info_mentions() {
   [[ "$compact" == *"\"${normalized_key}\":\"${value}\""* || "$compact" == *"${normalized_key}:${value}"* ]]
 }
 
+podman_info_contains() {
+  local output="$1"
+  local needle="$2"
+  local lower_output lower_needle
+  lower_output="$(printf '%s' "$output" | tr '[:upper:]' '[:lower:]')"
+  lower_needle="$(printf '%s' "$needle" | tr '[:upper:]' '[:lower:]')"
+  [[ "$lower_output" == *"$lower_needle"* ]]
+}
+
 local_cgroup_v2_ok() {
   local fs_type
   fs_type="$(stat -fc %T /sys/fs/cgroup 2>/dev/null || true)"
@@ -342,15 +354,157 @@ local_cgroup_v2_ok() {
   grep -q ' - cgroup2 ' /proc/self/mountinfo 2>/dev/null
 }
 
+podman_probe_image() {
+  local candidate
+  local candidates=(
+    "amber-codex-sandbox:ubuntu-24.04-codex-cli"
+    "localhost/amber-codex-sandbox:ubuntu-24.04-codex-cli"
+    "ubuntu:24.04"
+    "docker.io/library/ubuntu:24.04"
+  )
+  for candidate in "${candidates[@]}"; do
+    if podman image exists "$candidate" >/dev/null 2>&1; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+run_podman_cgroup_probe() {
+  local image="$1"
+  local manager="$2"
+  local stderr_file="$3"
+  local container_name
+  local command=(podman)
+  container_name="amber-cgroup-probe-$$-$RANDOM"
+
+  if [[ -n "$manager" ]]; then
+    command+=("--cgroup-manager=$manager")
+  fi
+  command+=(
+    run
+    --rm
+    --name "$container_name"
+    --userns=keep-id
+    --network=slirp4netns
+    --cap-drop=all
+    --security-opt=no-new-privileges
+    "$image"
+    true
+  )
+
+  if "${command[@]}" >/dev/null 2>"$stderr_file"; then
+    return 0
+  fi
+  podman rm -f "$container_name" >/dev/null 2>&1 || true
+  return 1
+}
+
+podman_error_looks_like_cgroup_mode() {
+  local message="$1"
+  local lower
+  lower="$(printf '%s' "$message" | tr '[:upper:]' '[:lower:]')"
+  [[ "$lower" == *"cgroup"* \
+    || "$lower" == *"interactive authentication required"* \
+    || "$lower" == *"nocgroups"* ]]
+}
+
+detect_codex_cgroup_fallback() {
+  local podman_info="$1"
+  local image stderr_file default_error
+
+  CODEX_CGROUP_MANAGER_OVERRIDE=""
+  CODEX_ENFORCE_RESOURCE_LIMITS_OVERRIDE=""
+
+  if image="$(podman_probe_image)"; then
+    stderr_file="$(mktemp)"
+    if run_podman_cgroup_probe "$image" "" "$stderr_file"; then
+      rm -f "$stderr_file"
+      return 1
+    fi
+    default_error="$(cat "$stderr_file" 2>/dev/null || true)"
+    rm -f "$stderr_file"
+    if podman_error_looks_like_cgroup_mode "$default_error"; then
+      stderr_file="$(mktemp)"
+      if run_podman_cgroup_probe "$image" "cgroupfs" "$stderr_file"; then
+        rm -f "$stderr_file"
+        CODEX_CGROUP_MANAGER_OVERRIDE="cgroupfs"
+        CODEX_ENFORCE_RESOURCE_LIMITS_OVERRIDE="false"
+        warn "Podman cgroup probe failed with the current manager but passed with --cgroup-manager=cgroupfs."
+        return 0
+      fi
+      default_error="$(cat "$stderr_file" 2>/dev/null || true)"
+      rm -f "$stderr_file"
+      warn "Podman cgroupfs probe also failed; leaving Codex cgroup settings unchanged."
+      [[ -n "$default_error" ]] && warn "$default_error"
+    fi
+    return 1
+  fi
+
+  if podman_info_mentions "$podman_info" "cgroupManager" "systemd" \
+    && podman_info_contains "$podman_info" "microsoft-standard-wsl"; then
+    CODEX_CGROUP_MANAGER_OVERRIDE="cgroupfs"
+    CODEX_ENFORCE_RESOURCE_LIMITS_OVERRIDE="false"
+    warn "Podman is rootless with systemd cgroups inside WSL; no local image was available for a smoke probe."
+    return 0
+  fi
+  return 1
+}
+
+enable_codex_cgroup_fallback() {
+  local mode answer
+  mode="${CODEX_FIX_CGROUPS,,}"
+
+  case "$mode" in
+    y|yes|1|true|auto)
+      ;;
+    n|no|0|false|off|never)
+      warn "Not applying Amber's Codex Podman fallback. If Codex setup fails, rerun with AMBER_CODEX_FIX_CGROUPS=1."
+      CODEX_CGROUP_MANAGER_OVERRIDE=""
+      CODEX_ENFORCE_RESOURCE_LIMITS_OVERRIDE=""
+      return 1
+      ;;
+    ""|ask)
+      if ! installer_is_interactive; then
+        warn "Set AMBER_CODEX_FIX_CGROUPS=1 to let the installer apply Amber's workspace-only Podman fallback."
+        CODEX_CGROUP_MANAGER_OVERRIDE=""
+        CODEX_ENFORCE_RESOURCE_LIMITS_OVERRIDE=""
+        return 1
+      fi
+      answer=""
+      read -r -p "$(prompt_label "Apply Amber's workspace-only Podman cgroup fallback? [Y/n]"): " answer < "$TTY" || return 1
+      case "${answer,,}" in
+        ""|y|yes|1|true)
+          ;;
+        *)
+          CODEX_CGROUP_MANAGER_OVERRIDE=""
+          CODEX_ENFORCE_RESOURCE_LIMITS_OVERRIDE=""
+          return 1
+          ;;
+      esac
+      ;;
+    *)
+      warn "Unknown AMBER_CODEX_FIX_CGROUPS value '$CODEX_FIX_CGROUPS'; not changing Codex Podman settings."
+      CODEX_CGROUP_MANAGER_OVERRIDE=""
+      CODEX_ENFORCE_RESOURCE_LIMITS_OVERRIDE=""
+      return 1
+      ;;
+  esac
+
+  warn "Installer will set this workspace to codex.podman_cgroup_manager = \"cgroupfs\" and codex.enforce_resource_limits = false."
+  return 0
+}
+
 preflight_installer() {
   local required_commands=(
-    curl tar mktemp stat find grep sed head tr wc cp mv sort cat chmod ln rm mkdir sleep podman slirp4netns
+    curl tar mktemp stat find grep sed awk head tr wc cp mv sort cat chmod ln rm mkdir sleep podman slirp4netns
   )
   local missing=()
   local still_missing=()
   local failures=()
   local command podman_info podman_help flag
-  local required_podman_flags=(--userns --network --cgroups --memory --cpus --pids-limit)
+  local required_podman_flags=(--userns --network --memory --cpus --pids-limit)
 
   info "Checking host prerequisites..."
   while IFS= read -r command; do
@@ -378,6 +532,7 @@ preflight_installer() {
         && ! podman_info_mentions "$podman_info" "cgroup version" "v2"; then
         failures+=("Podman must report cgroup v2. Verify with: podman info --debug | grep -i cgroup")
       fi
+      detect_codex_cgroup_fallback "$podman_info" && enable_codex_cgroup_fallback || true
     fi
     if ! local_cgroup_v2_ok; then
       failures+=("The host must expose a cgroup v2 mount. Verify with: stat -fc %T /sys/fs/cgroup")
@@ -722,10 +877,83 @@ install_release() {
   success "Installed Amber $tag to $release_dir"
 }
 
+set_toml_key() {
+  local file="$1"
+  local section="$2"
+  local key="$3"
+  local value="$4"
+  local tmp
+  tmp="$file.tmp"
+  awk -v section="$section" -v key="$key" -v value="$value" '
+    BEGIN {
+      in_section = 0
+      section_seen = 0
+      key_set = 0
+    }
+    $0 == "[" section "]" {
+      if (in_section && !key_set) {
+        print key " = " value
+        key_set = 1
+      }
+      in_section = 1
+      section_seen = 1
+      print
+      next
+    }
+    /^\[/ {
+      if (in_section && !key_set) {
+        print key " = " value
+        key_set = 1
+      }
+      in_section = 0
+    }
+    in_section && $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+      print key " = " value
+      key_set = 1
+      next
+    }
+    { print }
+    END {
+      if (!section_seen) {
+        print ""
+        print "[" section "]"
+        print key " = " value
+      } else if (in_section && !key_set) {
+        print key " = " value
+      }
+    }
+  ' "$file" > "$tmp"
+  mv "$tmp" "$file"
+}
+
+apply_codex_workspace_overrides() {
+  local workspace="$1"
+  local config_path="$AMBER_HOME/workspaces/$workspace/config.toml"
+
+  if [[ -z "$CODEX_CGROUP_MANAGER_OVERRIDE" && -z "$CODEX_ENFORCE_RESOURCE_LIMITS_OVERRIDE" ]]; then
+    return 0
+  fi
+  if [[ ! -f "$config_path" ]]; then
+    warn "Could not find workspace config at $config_path; Codex Podman fallback will be passed through environment only."
+    return 0
+  fi
+
+  info "Applying Amber workspace Podman fallback..."
+  if [[ -n "$CODEX_CGROUP_MANAGER_OVERRIDE" ]]; then
+    set_toml_key "$config_path" "codex" "podman_cgroup_manager" "\"$CODEX_CGROUP_MANAGER_OVERRIDE\""
+  fi
+  if [[ -n "$CODEX_ENFORCE_RESOURCE_LIMITS_OVERRIDE" ]]; then
+    set_toml_key "$config_path" "codex" "enforce_resource_limits" "$CODEX_ENFORCE_RESOURCE_LIMITS_OVERRIDE"
+  fi
+  chmod 600 "$config_path" || true
+}
+
 configure_workspace() {
   local workspace="$1"
+  local configure_env=()
   info "Initializing workspace $workspace..."
   "$AMBER_HOME/bin/amber" workspace init "$workspace"
+  apply_codex_workspace_overrides "$workspace"
   if [[ ! -r "$TTY" ]]; then
     error "Interactive authentication requires a terminal. Run manually:"
     echo "  $AMBER_HOME/bin/amber workspace configure $workspace" >&2
@@ -733,7 +961,13 @@ configure_workspace() {
   fi
   info "Configuring workspace $workspace..."
   printf '%b%s%b\n' "$COLOR_DIM" "Secret input is masked with asterisks." "$COLOR_RESET"
-  "$AMBER_HOME/bin/amber" workspace configure "$workspace" < "$TTY"
+  if [[ -n "$CODEX_CGROUP_MANAGER_OVERRIDE" ]]; then
+    configure_env+=("AMBER_CODEX_CGROUP_MANAGER=$CODEX_CGROUP_MANAGER_OVERRIDE")
+  fi
+  if [[ -n "$CODEX_ENFORCE_RESOURCE_LIMITS_OVERRIDE" ]]; then
+    configure_env+=("AMBER_CODEX_ENFORCE_RESOURCE_LIMITS=$CODEX_ENFORCE_RESOURCE_LIMITS_OVERRIDE")
+  fi
+  env "${configure_env[@]}" "$AMBER_HOME/bin/amber" workspace configure "$workspace" < "$TTY"
 }
 
 maybe_install_service() {

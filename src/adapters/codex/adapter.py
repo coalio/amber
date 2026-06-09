@@ -5,6 +5,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -511,8 +512,6 @@ class CodexAdapter(BaseAdapter):
                     "--pids-limit=512",
                 ]
             )
-        else:
-            args.append("--cgroups=disabled")
         args.extend(
             [
                 "--cap-drop=all",
@@ -555,8 +554,6 @@ class CodexAdapter(BaseAdapter):
             "root",
             "--network=slirp4netns",
         ]
-        if not self._enforce_resource_limits:
-            args.append("--cgroups=disabled")
         args.extend(
             [
                 "-v",
@@ -595,9 +592,22 @@ class CodexAdapter(BaseAdapter):
 
     def _install_app_server_script(self) -> None:
         self._progress("installing codex app-server script")
-        source = Path(__file__).with_name("app_server.py")
+        source = self._app_server_script_source()
         shutil.copyfile(source, self._workdir / ".amber_codex_app_server.py")
         self._install_codex_rules_skill()
+
+    def _app_server_script_source(self) -> Path:
+        candidates = (
+            Path(__file__).with_name("app_server.py"),
+            Path(sys.executable).resolve().parent / "resources" / "codex" / "app_server.py",
+        )
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        raise FileNotFoundError(
+            "Codex app-server script is missing from this Amber release. "
+            f"Looked in: {', '.join(str(candidate) for candidate in candidates)}"
+        )
 
     def _install_codex_rules_skill(self) -> None:
         if not self._rules_skill_path.exists():

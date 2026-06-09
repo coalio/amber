@@ -70,10 +70,11 @@ fi
   main.py
 
 STAGING="$DIST_DIR/release/$APP_NAME"
-mkdir -p "$STAGING/resources/system" "$STAGING/resources/prompts" "$STAGING/resources/codex-skills/CodexRules"
+mkdir -p "$STAGING/resources/system" "$STAGING/resources/prompts" "$STAGING/resources/codex" "$STAGING/resources/codex-skills/CodexRules"
 
 cp -a "$DIST_DIR/$APP_NAME/." "$STAGING/"
 cp "$ROOT/src/config/config.default.toml" "$STAGING/resources/config.default.toml"
+cp "$ROOT/src/adapters/codex/app_server.py" "$STAGING/resources/codex/app_server.py"
 cp "$ROOT/src/config/system/"*.md "$STAGING/resources/system/"
 cp "$ROOT/src/config/AI_SYSTEM_CASUAL.md" "$STAGING/resources/prompts/"
 cp "$ROOT/src/config/AI_SYSTEM_WORK.md" "$STAGING/resources/prompts/"

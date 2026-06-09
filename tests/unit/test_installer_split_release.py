@@ -206,6 +206,97 @@ def test_installer_reuses_cached_release_archive(tmp_path: Path) -> None:
     ]
 
 
+def test_installer_no_cache_downloads_even_when_cached_archive_exists(tmp_path: Path) -> None:
+    archive = _make_release_archive(tmp_path)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _add_fake_installer_prereqs(fake_bin)
+    curl_log = tmp_path / "curl.log"
+    _write_executable(
+        fake_bin / "curl",
+        """
+        #!/usr/bin/env bash
+        set -euo pipefail
+        out=""
+        url=""
+        while [[ $# -gt 0 ]]; do
+          case "$1" in
+            -o)
+              out="$2"
+              shift 2
+              ;;
+            *)
+              url="$1"
+              shift
+              ;;
+          esac
+        done
+
+        printf '%s\\n' "$url" >> "$FAKE_CURL_LOG"
+        case "$url" in
+          *api.github.com*/releases/latest)
+            cat <<'JSON'
+        {
+          "tag_name": "v0.4.0",
+          "assets": [
+            {"browser_download_url": "https://downloads.example/amber-linux-x86_64.tar.gz"}
+          ]
+        }
+        JSON
+            ;;
+          *amber-linux-x86_64.tar.gz)
+            cp "$FAKE_ARCHIVE" "$out"
+            ;;
+          *)
+            echo "unexpected curl url: $url" >&2
+            exit 2
+            ;;
+        esac
+        """,
+    )
+    tty = tmp_path / "tty"
+    tty.write_text("", encoding="utf-8")
+    fake_log = tmp_path / "amber.log"
+    amber_home = tmp_path / ".amber"
+    cached_archive = amber_home / "packages" / "v0.4.0" / "amber-linux-x86_64.tar.gz"
+    cached_archive.parent.mkdir(parents=True)
+    cached_archive.write_bytes(archive.read_bytes())
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "AMBER_FAKE_LOG": str(fake_log),
+            "AMBER_HOME": str(amber_home),
+            "AMBER_INSTALL_NO_CACHE": "1",
+            "AMBER_INSTALL_SERVICE": "n",
+            "AMBER_TTY": str(tty),
+            "FAKE_ARCHIVE": str(archive),
+            "FAKE_CURL_LOG": str(curl_log),
+            "PATH": f"{fake_bin}:{env['PATH']}",
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", "installer/install.sh", "indiedreamers"],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Ignoring cached Amber v0.4.0 packages for this run..." in result.stdout
+    assert "Reusing downloaded Amber v0.4.0 package" not in result.stdout
+    assert curl_log.read_text(encoding="utf-8").splitlines() == [
+        "https://api.github.com/repos/coalio/amber/releases/latest",
+        "https://downloads.example/amber-linux-x86_64.tar.gz",
+    ]
+
+
 def test_installer_recovers_tmp_release_archive_before_download(tmp_path: Path) -> None:
     archive = _make_release_archive(tmp_path)
     tmp_root = tmp_path / "tmp-root"

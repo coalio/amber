@@ -73,6 +73,7 @@ The installer defaults to the latest `coalio/amber` GitHub release. Maintainers 
 - `AMBER_ASSET_NAME` changes the expected release asset name.
 - `AMBER_TMP_PACKAGE` recovers a specific previously downloaded package path.
 - `AMBER_RECOVER_TMP_PACKAGE=1` auto-recovers the largest readable `$AMBER_ASSET_NAME` under `${TMPDIR:-/tmp}` before downloading.
+- `AMBER_INSTALL_NO_CACHE=1` or `AMBER_NO_CACHE=1` ignores cached and recovered packages for this run, downloads the release asset again, then refreshes the persistent package cache.
 - `AMBER_INSTALL_FIX_SYSTEM` controls interactive system package fixes for missing prerequisites (`ask`, `yes`, or `no`). Non-interactive installs still print the command and exit instead of mutating the host.
 - `AMBER_INSTALL_SERVICE` pre-answers the user-service prompt.
 

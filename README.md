@@ -32,6 +32,12 @@ curl -fsSL https://raw.githubusercontent.com/coalio/amber/master/installer/insta
 
 This checks host prerequisites, downloads the latest GitHub release, installs Amber under `~/.amber`, creates `~/.amber/workspaces/my-workspace`, runs interactive authentication, and asks whether to install the optional user service.
 
+To force a fresh package download instead of reusing `~/.amber/packages` or recovered `/tmp` downloads:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/coalio/amber/master/installer/install.sh | AMBER_INSTALL_NO_CACHE=1 bash -s -- my-workspace
+```
+
 After install, the Amber binary is here:
 
 ```bash
@@ -125,6 +131,7 @@ Run `workspace doctor` after changing config or auth:
 - If Telegram setup fails, rerun `~/.amber/bin/amber workspace configure my-workspace`.
 - If Codex setup fails before credential prompts, run `~/.amber/bin/amber workspace doctor my-workspace --external` and fix the failed Podman check. Amber can automatically retry the sandbox with `codex.enforce_resource_limits = false` when cgroup-backed resource limits are the blocker.
 - If Codex or GitHub auth fails, rerun workspace configuration from a real terminal so the sandbox can prompt interactively.
+- If the installer reused an old package, rerun it with `AMBER_INSTALL_NO_CACHE=1`.
 - If the service does not start, check `~/.amber/bin/amber service status --workspace my-workspace` first, then inspect the workspace `logs/` directory.
 - If a release asset cannot be found, the installer did not find a compatible latest GitHub release for this platform.
 

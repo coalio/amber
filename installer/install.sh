@@ -11,6 +11,7 @@ RELEASE_TAG="${AMBER_RELEASE_TAG:-}"
 TMP_PACKAGE="${AMBER_TMP_PACKAGE:-}"
 RECOVER_TMP_PACKAGE="${AMBER_RECOVER_TMP_PACKAGE:-ask}"
 INSTALL_FIX_SYSTEM="${AMBER_INSTALL_FIX_SYSTEM:-ask}"
+INSTALL_NO_CACHE="${AMBER_INSTALL_NO_CACHE:-${AMBER_NO_CACHE:-}}"
 TTY="${AMBER_TTY:-/dev/tty}"
 
 if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-}" != "dumb" ]]; then
@@ -117,6 +118,17 @@ need_command() {
 
 installer_is_interactive() {
   [[ -r "$TTY" && -t 1 ]]
+}
+
+flag_enabled() {
+  case "${1,,}" in
+    y|yes|1|true|on)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
 join_words() {
@@ -625,7 +637,7 @@ install_release() {
   need_command tar
   need_command mktemp
 
-  local json tag url part_urls tmp archive release_tmp release_dir cache_dir cached_archive recovered_archive
+  local json tag url part_urls tmp archive release_tmp release_dir cache_dir cached_archive recovered_archive no_cache
   # resolve the release source before choosing a local cache path
   if [[ -n "$RELEASE_ARCHIVE" ]]; then
     tag="${RELEASE_TAG:-local}"
@@ -650,6 +662,10 @@ install_release() {
   archive="$tmp/$ASSET_NAME"
   release_tmp="$tmp/release"
   release_dir="$AMBER_HOME/releases/$tag"
+  no_cache=0
+  if flag_enabled "$INSTALL_NO_CACHE"; then
+    no_cache=1
+  fi
 
   # cache normal github release downloads by tag and asset name
   if [[ -n "$RELEASE_ARCHIVE" ]]; then
@@ -661,7 +677,16 @@ install_release() {
   else
     cache_dir="$AMBER_HOME/packages/$tag"
     cached_archive="$cache_dir/$ASSET_NAME"
-    if [[ -f "$cached_archive" ]] && archive_is_readable "$cached_archive"; then
+    if (( no_cache )); then
+      info "Ignoring cached Amber $tag packages for this run..."
+      download_github_release_archive "$archive" "$tag" "$url" "${part_urls:-}"
+      if ! archive_is_readable "$archive"; then
+        error "Downloaded Amber $tag package is not a readable tar.gz archive."
+        exit 1
+      fi
+      copy_archive_to_cache "$archive" "$cached_archive"
+      archive="$cached_archive"
+    elif [[ -f "$cached_archive" ]] && archive_is_readable "$cached_archive"; then
       info "Reusing downloaded Amber $tag package from $cached_archive..."
       archive="$cached_archive"
     else

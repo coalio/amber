@@ -71,6 +71,8 @@ The installer defaults to the latest `coalio/amber` GitHub release. Maintainers 
 - `AMBER_RELEASE_URL` installs from a specific archive URL.
 - `AMBER_RELEASE_TAG` controls the release directory name for manual installs.
 - `AMBER_ASSET_NAME` changes the expected release asset name.
+- `AMBER_TMP_PACKAGE` recovers a specific previously downloaded package path.
+- `AMBER_RECOVER_TMP_PACKAGE=1` auto-recovers the largest readable `$AMBER_ASSET_NAME` under `${TMPDIR:-/tmp}` before downloading.
 - `AMBER_INSTALL_SERVICE` pre-answers the user-service prompt.
 
 Example local archive install:

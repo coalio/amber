@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import getpass
 import os
 import subprocess
 import sys
@@ -23,6 +22,7 @@ from src.config.workspace import (
     service_unit_name,
     uninstall_user_service,
 )
+from src.cli_input import read_masked_secret
 from src.runtime import build_application
 
 
@@ -187,10 +187,7 @@ def _prompt_required_secret(label: str, env_name: str, current: Any) -> str:
     if existing:
         prompt += f" [{_masked(existing)}]"
     prompt += ": "
-    if sys.stdin.isatty():
-        raw = getpass.getpass(prompt).strip()
-    else:
-        raw = input(prompt).strip()
+    raw = _prompt_secret(prompt).strip()
     value = raw or existing
     if not value:
         raise RuntimeError(f"{label} is required.")
@@ -203,12 +200,15 @@ def _prompt_optional_secret(label: str, env_name: str, current: Any = None) -> s
     if existing:
         prompt += f" [{_masked(existing)}]"
     prompt += " (leave blank for interactive login): "
-    if sys.stdin.isatty():
-        raw = getpass.getpass(prompt).strip()
-    else:
-        raw = input(prompt).strip()
+    raw = _prompt_secret(prompt).strip()
     value = raw or existing
     return value or None
+
+
+def _prompt_secret(prompt: str) -> str:
+    if not sys.stdin.isatty():
+        return input(prompt)
+    return read_masked_secret(prompt)
 
 
 def _existing_text(value: Any) -> str:

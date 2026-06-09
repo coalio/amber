@@ -203,6 +203,97 @@ def test_installer_reuses_cached_release_archive(tmp_path: Path) -> None:
     ]
 
 
+def test_installer_recovers_tmp_release_archive_before_download(tmp_path: Path) -> None:
+    archive = _make_release_archive(tmp_path)
+    tmp_root = tmp_path / "tmp-root"
+    recovered_dir = tmp_root / "tmp.previous"
+    recovered_dir.mkdir(parents=True)
+    recovered_archive = recovered_dir / "amber-linux-x86_64.tar.gz"
+    recovered_archive.write_bytes(archive.read_bytes())
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    curl_log = tmp_path / "curl.log"
+    _write_executable(
+        fake_bin / "curl",
+        """
+        #!/usr/bin/env bash
+        set -euo pipefail
+        out=""
+        url=""
+        while [[ $# -gt 0 ]]; do
+          case "$1" in
+            -o)
+              out="$2"
+              shift 2
+              ;;
+            *)
+              url="$1"
+              shift
+              ;;
+          esac
+        done
+
+        printf '%s\\n' "$url" >> "$FAKE_CURL_LOG"
+        case "$url" in
+          *api.github.com*/releases/latest)
+            cat <<'JSON'
+        {
+          "tag_name": "v0.3.0",
+          "assets": [
+            {"browser_download_url": "https://downloads.example/amber-linux-x86_64.tar.gz"}
+          ]
+        }
+        JSON
+            ;;
+          *amber-linux-x86_64.tar.gz)
+            echo "package download should have been skipped" >&2
+            exit 3
+            ;;
+          *)
+            echo "unexpected curl url: $url" >&2
+            exit 2
+            ;;
+        esac
+        """,
+    )
+    tty = tmp_path / "tty"
+    tty.write_text("", encoding="utf-8")
+    fake_log = tmp_path / "amber.log"
+    amber_home = tmp_path / ".amber"
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "AMBER_FAKE_LOG": str(fake_log),
+            "AMBER_HOME": str(amber_home),
+            "AMBER_INSTALL_SERVICE": "n",
+            "AMBER_RECOVER_TMP_PACKAGE": "1",
+            "AMBER_TTY": str(tty),
+            "FAKE_CURL_LOG": str(curl_log),
+            "PATH": f"{fake_bin}:{env['PATH']}",
+            "TMPDIR": str(tmp_root),
+        }
+    )
+    result = subprocess.run(
+        ["bash", "installer/install.sh", "indiedreamers"],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Recovering downloaded Amber v0.3.0 package from" in result.stdout
+    assert (amber_home / "packages" / "v0.3.0" / "amber-linux-x86_64.tar.gz").exists()
+    assert curl_log.read_text(encoding="utf-8").splitlines() == [
+        "https://api.github.com/repos/coalio/amber/releases/latest",
+    ]
+
+
 def _make_release_archive(tmp_path: Path) -> Path:
     release_root = tmp_path / "release"
     release_root.mkdir()

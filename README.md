@@ -138,16 +138,6 @@ AMBER_ATTENTION_SCORER=modernbert AMBER_ATTENTION_DEVICE=cpu python main.py run 
 
 Default release binaries do not include this scorer. Maintainers can build a separate heavy ML release with `AMBER_BUILD_ML=1`.
 
-## Troubleshooting
-
-- If `amber` is not found, use `~/.amber/bin/amber` or add `~/.amber/bin` to `PATH`.
-- If Telegram setup fails, rerun `~/.amber/bin/amber workspace configure my-workspace`.
-- If Codex setup fails before credential prompts, run `~/.amber/bin/amber workspace doctor my-workspace --external` and fix the failed Podman check. On rootless Podman systems where systemd cgroups fail, rerun the installer with `AMBER_CODEX_FIX_CGROUPS=1`; Amber will apply the workspace-only fallback `codex.podman_cgroup_manager = "cgroupfs"` and `codex.enforce_resource_limits = false`.
-- If Codex or GitHub auth fails, rerun workspace configuration from a real terminal so the sandbox can prompt interactively.
-- If the installer reused an old package, rerun it with `AMBER_INSTALL_NO_CACHE=1`.
-- If the service does not start, check `~/.amber/bin/amber service status --workspace my-workspace` first, then inspect the workspace `logs/` directory.
-- If a release asset cannot be found, the installer did not find a compatible latest GitHub release for this platform.
-
 ## Developer Docs
 
 Maintainer setup, tests, release building, and documentation rules live in [CONTRIBUTING.md](./CONTRIBUTING.md).

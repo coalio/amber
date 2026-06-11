@@ -58,7 +58,16 @@ Integration tests are slower and may require live OpenAI, Telegram, Linear, GitH
 
 ## Release Artifacts
 
-Build the Linux release asset with:
+Every GitHub release must include both installer-selectable Linux packages and their SHA256 files:
+
+- Standard package: `amber-linux-x86_64.tar.gz`
+- Standard checksum: `amber-linux-x86_64.tar.gz.sha256`
+- Full local-ML package: `amber-linux-x86_64-full.tar.gz`
+- Full local-ML checksum: `amber-linux-x86_64-full.tar.gz.sha256`
+
+Do not publish a release with only one package variant. The installer offers both the standard and full local-ML choices, so a missing full package breaks ModernBERT installs. If an archive exceeds GitHub's upload size limit and the build script splits it, upload the split files with the generated package-name prefix, such as `amber-linux-x86_64.tar.gz.part-*` or `amber-linux-x86_64-full.tar.gz.part-*`, plus the matching `.sha256` file.
+
+Build the standard Linux release asset with:
 
 ```bash
 source venv/bin/activate
@@ -67,11 +76,13 @@ scripts/build_release.sh
 
 The standard build writes `dist/amber-linux-x86_64.tar.gz` and a SHA256 file. If the archive is larger than the configured split size, the script also creates `dist/amber-linux-x86_64.tar.gz.part-*`.
 
-Default release builds exclude Torch, Transformers, CUDA/NVIDIA libraries, and related scientific packages. Build the separate full local-ML package as `dist/amber-linux-x86_64-full.tar.gz` with:
+Default release builds exclude Torch, Transformers, CUDA/NVIDIA libraries, and related scientific packages. Build the separate full local-ML package with:
 
 ```bash
 AMBER_BUILD_ML=1 scripts/build_release.sh
 ```
+
+The full build writes `dist/amber-linux-x86_64-full.tar.gz`, `dist/amber-linux-x86_64-full.tar.gz.sha256`, and split files named `dist/amber-linux-x86_64-full.tar.gz.part-*` if the archive crosses the split threshold.
 
 ## Installer Overrides
 

@@ -6,7 +6,7 @@ Utilities are shared support code used across multiple subsystems. Keep this fol
 
 - `files.py`: file helpers.
 - `ids.py`: event and correlation IDs.
-- `logging.py`: JSON logging setup and entrypoint logging.
+- `logging.py`: human-readable logging setup and entrypoint logging.
 - `message_archive.py`: process-local recent message archive.
 - `metrics.py`: lightweight metrics registry.
 - `openai.py`: OpenAI response helpers.

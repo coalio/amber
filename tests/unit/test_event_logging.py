@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timezone
 
@@ -120,18 +119,49 @@ def test_configure_logging_creates_timestamped_run_file(
 
         log_utils.get_logger("amber.test").info(
             "log.smoke",
-            extra={"event": "log.smoke", "context": {"ok": True}},
+            extra={"event": "log.smoke", "context": {"message": "wrote log file", "ok": True}},
         )
         for handler in root.handlers:
             handler.flush()
 
-        records = [json.loads(line) for line in run_path.read_text(encoding="utf-8").splitlines()]
-        assert any(record.get("event") == "log.smoke" and record["context"] == {"ok": True} for record in records)
+        log_text = run_path.read_text(encoding="utf-8")
+        assert "INFO" in log_text
+        assert "amber.test" in log_text
+        assert "log.smoke - wrote log file" in log_text
+        assert "ok=true" in log_text
+        assert "\033[" not in log_text
     finally:
         for handler in list(root.handlers):
             if handler not in previous_handlers and isinstance(handler, logging.FileHandler):
                 root.removeHandler(handler)
                 handler.close()
+
+
+def test_human_readable_formatter_renders_codex_progress_as_colored_text() -> None:
+    record = logging.LogRecord(
+        name="amber.adapters.codex",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="codex.progress",
+        args=(),
+        exc_info=None,
+    )
+    record.event = "codex.progress"
+    record.context = {
+        "message": "preparing codex sandbox directories",
+        "task_id": "task 1",
+        "ready": True,
+    }
+
+    line = log_utils.HumanReadableFormatter(use_color=True).format(record)
+
+    assert "\033[32mINFO" in line
+    assert "amber.adapters.codex" in line
+    assert "codex.progress - preparing codex sandbox directories" in line
+    assert 'task_id="task 1"' in line
+    assert "ready=true" in line
+    assert "message=" not in line
 
 
 def _build_message_payload(content: str) -> TelegramMessagePayload:

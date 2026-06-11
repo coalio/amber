@@ -125,9 +125,7 @@ def test_configure_logging_creates_timestamped_run_file(
             handler.flush()
 
         log_text = run_path.read_text(encoding="utf-8")
-        assert "INFO" in log_text
-        assert "amber.test" in log_text
-        assert "log.smoke - wrote log file" in log_text
+        assert "[INFO] log.smoke: wrote log file" in log_text
         assert "ok=true" in log_text
         assert "\033[" not in log_text
     finally:
@@ -156,12 +154,28 @@ def test_human_readable_formatter_renders_codex_progress_as_colored_text() -> No
 
     line = log_utils.HumanReadableFormatter(use_color=True).format(record)
 
-    assert "\033[32mINFO" in line
-    assert "amber.adapters.codex" in line
-    assert "codex.progress - preparing codex sandbox directories" in line
+    assert "\033[32m[INFO]" in line
+    assert "amber.adapters.codex" not in line
+    assert "codex.progress: preparing codex sandbox directories" in line
     assert 'task_id="task 1"' in line
     assert "ready=true" in line
     assert "message=" not in line
+
+
+def test_human_readable_formatter_falls_back_to_logger_name() -> None:
+    record = logging.LogRecord(
+        name="amber.adapters.codex",
+        level=logging.WARNING,
+        pathname=__file__,
+        lineno=1,
+        msg="sandbox setup took longer than expected",
+        args=(),
+        exc_info=None,
+    )
+
+    line = log_utils.HumanReadableFormatter().format(record)
+
+    assert line == "[WARNING] amber.adapters.codex: sandbox setup took longer than expected"
 
 
 def _build_message_payload(content: str) -> TelegramMessagePayload:

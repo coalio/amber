@@ -13,7 +13,6 @@ from zoneinfo import ZoneInfo
 
 _RUN_LOG_PATH: Path | None = None
 _RESET = "\033[0m"
-_DIM = "\033[2m"
 _LEVEL_COLORS = {
     "DEBUG": "\033[36m",
     "INFO": "\033[32m",
@@ -30,29 +29,18 @@ class HumanReadableFormatter(logging.Formatter):
         self._use_color = use_color
 
     def format(self, record: logging.LogRecord) -> str:
-        timestamp = _format_record_time(record)
-        event = _record_text(record, "event")
+        source = _record_text(record, "event") or record.name
         message = record.getMessage()
         context = getattr(record, "context", None)
         detail, context_text = _human_context(context)
+        if detail is None and message != source:
+            detail = message
 
-        # prefer the structured event name when the log call provides one.
-        title = event or message
-        if event and message != event:
-            title = f"{event} {message}"
+        line = f"{self._level(record.levelname)} {source}"
         if detail:
-            title = f"{title} - {detail}"
+            line = f"{line}: {detail}"
         if context_text:
-            title = f"{title} | {context_text}"
-
-        line = " ".join(
-            (
-                self._dim(timestamp),
-                self._level(record.levelname),
-                self._dim(record.name),
-                title,
-            )
-        )
+            line = f"{line} | {context_text}"
         if record.exc_info:
             line = f"{line}\n{self.formatException(record.exc_info)}"
         if record.stack_info:
@@ -60,15 +48,10 @@ class HumanReadableFormatter(logging.Formatter):
         return line
 
     def _level(self, level_name: str) -> str:
-        label = f"{level_name:<8}"
+        label = f"[{level_name}]"
         if not self._use_color:
             return label
         return f"{_LEVEL_COLORS.get(level_name, '')}{label}{_RESET}"
-
-    def _dim(self, text: str) -> str:
-        if not self._use_color:
-            return text
-        return f"{_DIM}{text}{_RESET}"
 
 
 def configure_logging(
@@ -136,11 +119,6 @@ def _new_run_log_path(log_dir: Path, timezone_name: str) -> Path:
     day_dir = log_dir / f"{now.month}-{now.day}-{now.year}"
     day_dir.mkdir(parents=True, exist_ok=True)
     return day_dir / f"{now.hour:02d}-{now.minute:02d}-{now.second:02d}-{now.microsecond:06d}.log"
-
-
-def _format_record_time(record: logging.LogRecord) -> str:
-    created = datetime.fromtimestamp(record.created, tz=timezone.utc)
-    return f"{created:%Y-%m-%d %H:%M:%S}.{created.microsecond // 1000:03d}Z"
 
 
 def _record_text(record: logging.LogRecord, name: str) -> str | None:

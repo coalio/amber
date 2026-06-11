@@ -334,7 +334,7 @@ def _format_codex_setup_error(exc: RuntimeError, workspace: Path, *, credentials
         return (
             f"{prefix}Codex sandbox setup failed because Podman cannot access cgroups "
             "in this environment.\n"
-            "Rerun the installer with AMBER_CODEX_FIX_CGROUPS=1, or set "
+            "Rerun the installer and choose the cgroupfs/no-limits fallback, or set "
             'codex.podman_cgroup_manager = "cgroupfs" and codex.enforce_resource_limits = false, then rerun:\n'
             f"  amber workspace configure {workspace}\n"
             'Original Podman error: could not find cgroup mount in "/proc/self/cgroup"'
@@ -342,7 +342,7 @@ def _format_codex_setup_error(exc: RuntimeError, workspace: Path, *, credentials
     if "not compatible with nocgroups" in message.lower() or "interactive authentication required" in message.lower():
         return (
             f"{prefix}Codex sandbox setup failed because Podman rejected the current rootless cgroup mode.\n"
-            "Rerun the installer with AMBER_CODEX_FIX_CGROUPS=1, or set "
+            "Rerun the installer and choose the cgroupfs/no-limits fallback, or set "
             'codex.podman_cgroup_manager = "cgroupfs" and codex.enforce_resource_limits = false, then rerun:\n'
             f"  amber workspace configure {workspace}\n"
             f"{message}"

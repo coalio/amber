@@ -71,17 +71,19 @@ def test_installer_downloads_split_release_without_full_asset(tmp_path: Path) ->
     tty = tmp_path / "tty"
     tty.write_text("", encoding="utf-8")
     fake_log = tmp_path / "amber.log"
+    tmp_root = tmp_path / "tmp-empty"
+    tmp_root.mkdir()
 
     env = os.environ.copy()
     env.update(
         {
             "AMBER_FAKE_LOG": str(fake_log),
             "AMBER_HOME": str(tmp_path / ".amber"),
-            "AMBER_INSTALL_SERVICE": "n",
             "AMBER_TTY": str(tty),
             "FAKE_PART_A": str(part_a),
             "FAKE_PART_B": str(part_b),
             "PATH": f"{fake_bin}:{env['PATH']}",
+            "TMPDIR": str(tmp_root),
         }
     )
     result = subprocess.run(
@@ -158,17 +160,19 @@ def test_installer_reuses_cached_release_archive(tmp_path: Path) -> None:
     tty.write_text("", encoding="utf-8")
     fake_log = tmp_path / "amber.log"
     amber_home = tmp_path / ".amber"
+    tmp_root = tmp_path / "tmp-empty"
+    tmp_root.mkdir()
 
     env = os.environ.copy()
     env.update(
         {
             "AMBER_FAKE_LOG": str(fake_log),
             "AMBER_HOME": str(amber_home),
-            "AMBER_INSTALL_SERVICE": "n",
             "AMBER_TTY": str(tty),
             "FAKE_ARCHIVE": str(archive),
             "FAKE_CURL_LOG": str(curl_log),
             "PATH": f"{fake_bin}:{env['PATH']}",
+            "TMPDIR": str(tmp_root),
         }
     )
 
@@ -196,7 +200,7 @@ def test_installer_reuses_cached_release_archive(tmp_path: Path) -> None:
     assert first.returncode == 0, first.stdout + first.stderr
     assert second.returncode == 0, second.stdout + second.stderr
     assert "Downloading Amber v0.2.0 from coalio/amber..." in first.stdout
-    assert "Reusing downloaded Amber v0.2.0 package" in second.stdout
+    assert "Using cached Amber v0.2.0 package" in second.stdout
     assert "Extracting Amber v0.2.0..." in second.stdout
     assert (amber_home / "packages" / "v0.2.0" / "amber-linux-x86_64.tar.gz").exists()
     assert curl_log.read_text(encoding="utf-8").splitlines() == [
@@ -206,7 +210,7 @@ def test_installer_reuses_cached_release_archive(tmp_path: Path) -> None:
     ]
 
 
-def test_installer_no_cache_downloads_even_when_cached_archive_exists(tmp_path: Path) -> None:
+def test_installer_downloads_fresh_when_user_declines_cached_archive(tmp_path: Path) -> None:
     archive = _make_release_archive(tmp_path)
 
     fake_bin = tmp_path / "bin"
@@ -256,9 +260,11 @@ def test_installer_no_cache_downloads_even_when_cached_archive_exists(tmp_path: 
         """,
     )
     tty = tmp_path / "tty"
-    tty.write_text("", encoding="utf-8")
+    tty.write_text("\nn\n\n\n", encoding="utf-8")
     fake_log = tmp_path / "amber.log"
     amber_home = tmp_path / ".amber"
+    tmp_root = tmp_path / "tmp-empty"
+    tmp_root.mkdir()
     cached_archive = amber_home / "packages" / "v0.4.0" / "amber-linux-x86_64.tar.gz"
     cached_archive.parent.mkdir(parents=True)
     cached_archive.write_bytes(archive.read_bytes())
@@ -268,12 +274,11 @@ def test_installer_no_cache_downloads_even_when_cached_archive_exists(tmp_path: 
         {
             "AMBER_FAKE_LOG": str(fake_log),
             "AMBER_HOME": str(amber_home),
-            "AMBER_INSTALL_NO_CACHE": "1",
-            "AMBER_INSTALL_SERVICE": "n",
             "AMBER_TTY": str(tty),
             "FAKE_ARCHIVE": str(archive),
             "FAKE_CURL_LOG": str(curl_log),
             "PATH": f"{fake_bin}:{env['PATH']}",
+            "TMPDIR": str(tmp_root),
         }
     )
 
@@ -289,8 +294,8 @@ def test_installer_no_cache_downloads_even_when_cached_archive_exists(tmp_path: 
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "Ignoring cached Amber v0.4.0 packages for this run..." in result.stdout
-    assert "Reusing downloaded Amber v0.4.0 package" not in result.stdout
+    assert "Downloading a fresh Amber v0.4.0 package..." in result.stdout
+    assert "Using cached Amber v0.4.0 package" not in result.stdout
     assert curl_log.read_text(encoding="utf-8").splitlines() == [
         "https://api.github.com/repos/coalio/amber/releases/latest",
         "https://downloads.example/amber-linux-x86_64.tar.gz",
@@ -362,8 +367,6 @@ def test_installer_recovers_tmp_release_archive_before_download(tmp_path: Path) 
         {
             "AMBER_FAKE_LOG": str(fake_log),
             "AMBER_HOME": str(amber_home),
-            "AMBER_INSTALL_SERVICE": "n",
-            "AMBER_RECOVER_TMP_PACKAGE": "1",
             "AMBER_TTY": str(tty),
             "FAKE_CURL_LOG": str(curl_log),
             "PATH": f"{fake_bin}:{env['PATH']}",
@@ -437,19 +440,15 @@ def test_installer_applies_codex_cgroup_fallback_when_cgroupfs_probe_passes(tmp_
         """,
     )
     tty = tmp_path / "tty"
-    tty.write_text("", encoding="utf-8")
+    tty.write_text("y\ny\n\n\n", encoding="utf-8")
     fake_log = tmp_path / "amber.log"
-    env_log = tmp_path / "env.log"
     amber_home = tmp_path / ".amber"
 
     env = os.environ.copy()
     env.update(
         {
-            "AMBER_CODEX_FIX_CGROUPS": "yes",
-            "AMBER_FAKE_ENV_LOG": str(env_log),
             "AMBER_FAKE_LOG": str(fake_log),
             "AMBER_HOME": str(amber_home),
-            "AMBER_INSTALL_SERVICE": "n",
             "AMBER_RELEASE_ARCHIVE": str(archive),
             "AMBER_RELEASE_TAG": "local",
             "AMBER_TTY": str(tty),
@@ -469,14 +468,52 @@ def test_installer_applies_codex_cgroup_fallback_when_cgroupfs_probe_passes(tmp_
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "Applying Amber workspace Podman fallback..." in result.stdout
+    assert "Podman fallback probe passed with cgroupfs and Codex resource limits disabled" in result.stdout
+    assert "Applying Codex Podman workspace settings..." in result.stdout
     config = (amber_home / "workspaces" / "indiedreamers" / "config.toml").read_text(encoding="utf-8")
     assert 'podman_cgroup_manager = "cgroupfs"' in config
     assert "enforce_resource_limits = false" in config
-    assert env_log.read_text(encoding="utf-8").splitlines() == [
-        "AMBER_CODEX_CGROUP_MANAGER=cgroupfs",
-        "AMBER_CODEX_ENFORCE_RESOURCE_LIMITS=false",
-    ]
+
+
+def test_installer_can_disable_codex_resource_limits_by_choice(tmp_path: Path) -> None:
+    archive = _make_release_archive(tmp_path)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _add_fake_installer_prereqs(fake_bin)
+    tty = tmp_path / "tty"
+    tty.write_text("n\n\n\n", encoding="utf-8")
+    fake_log = tmp_path / "amber.log"
+    amber_home = tmp_path / ".amber"
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "AMBER_FAKE_LOG": str(fake_log),
+            "AMBER_HOME": str(amber_home),
+            "AMBER_RELEASE_ARCHIVE": str(archive),
+            "AMBER_RELEASE_TAG": "local",
+            "AMBER_TTY": str(tty),
+            "PATH": f"{fake_bin}:{env['PATH']}",
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", "installer/install.sh", "indiedreamers"],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Codex resource limits will be disabled for this workspace." in result.stdout
+    config = (amber_home / "workspaces" / "indiedreamers" / "config.toml").read_text(encoding="utf-8")
+    assert 'podman_cgroup_manager = "none"' in config
+    assert "enforce_resource_limits = false" in config
 
 
 def test_installer_preflight_fails_before_release_lookup_when_podman_is_broken(tmp_path: Path) -> None:
@@ -517,8 +554,6 @@ def test_installer_preflight_fails_before_release_lookup_when_podman_is_broken(t
     env.update(
         {
             "AMBER_HOME": str(tmp_path / ".amber"),
-            "AMBER_INSTALL_FIX_SYSTEM": "no",
-            "AMBER_INSTALL_SERVICE": "n",
             "FAKE_CURL_LOG": str(curl_log),
             "PATH": f"{fake_bin}:{env['PATH']}",
         }

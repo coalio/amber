@@ -4,18 +4,17 @@ set -euo pipefail
 REPO="${AMBER_REPO:-coalio/amber}"
 AMBER_HOME="${AMBER_HOME:-$HOME/.amber}"
 ASSET_NAME="${AMBER_ASSET_NAME:-amber-linux-x86_64.tar.gz}"
-WORKSPACE_NAME="${1:-${AMBER_WORKSPACE:-}}"
+WORKSPACE_NAME="${1:-}"
 RELEASE_ARCHIVE="${AMBER_RELEASE_ARCHIVE:-}"
 RELEASE_URL="${AMBER_RELEASE_URL:-}"
 RELEASE_TAG="${AMBER_RELEASE_TAG:-}"
-TMP_PACKAGE="${AMBER_TMP_PACKAGE:-}"
-RECOVER_TMP_PACKAGE="${AMBER_RECOVER_TMP_PACKAGE:-ask}"
-INSTALL_FIX_SYSTEM="${AMBER_INSTALL_FIX_SYSTEM:-ask}"
-INSTALL_NO_CACHE="${AMBER_INSTALL_NO_CACHE:-${AMBER_NO_CACHE:-}}"
-CODEX_FIX_CGROUPS="${AMBER_CODEX_FIX_CGROUPS:-ask}"
 CODEX_CGROUP_MANAGER_OVERRIDE=""
 CODEX_ENFORCE_RESOURCE_LIMITS_OVERRIDE=""
+PODMAN_PROBE_ERROR=""
+WORKSPACE_CONFIGURED=0
 TTY="${AMBER_TTY:-/dev/tty}"
+TTY_FD_OPEN=0
+TTY_ANSWER=""
 
 if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-}" != "dumb" ]]; then
   COLOR_BOLD=$'\033[1m'
@@ -120,10 +119,26 @@ need_command() {
 }
 
 installer_is_interactive() {
-  [[ -r "$TTY" && -t 1 ]]
+  [[ -r "$TTY" ]]
 }
 
-flag_enabled() {
+open_tty_input() {
+  if (( TTY_FD_OPEN )); then
+    return 0
+  fi
+  [[ -r "$TTY" ]] || return 1
+  exec 3< "$TTY"
+  TTY_FD_OPEN=1
+}
+
+read_tty_answer() {
+  local label="$1"
+  TTY_ANSWER=""
+  open_tty_input || return 1
+  read -r -p "$(prompt_label "$label"): " TTY_ANSWER <&3
+}
+
+answer_is_yes() {
   case "${1,,}" in
     y|yes|1|true|on)
       return 0
@@ -132,6 +147,35 @@ flag_enabled() {
       return 1
       ;;
   esac
+}
+
+ask_yes_no() {
+  local label="$1"
+  local default="$2"
+  local prompt answer
+  case "$default" in
+    yes)
+      prompt="$label [Y/n]"
+      ;;
+    no)
+      prompt="$label [y/N]"
+      ;;
+    *)
+      prompt="$label [y/n]"
+      ;;
+  esac
+
+  if ! installer_is_interactive || ! read_tty_answer "$prompt"; then
+    [[ "$default" == "yes" ]]
+    return
+  fi
+
+  answer="${TTY_ANSWER,,}"
+  if [[ -z "$answer" ]]; then
+    [[ "$default" == "yes" ]]
+    return
+  fi
+  answer_is_yes "$answer"
 }
 
 join_words() {
@@ -266,7 +310,7 @@ collect_missing_commands() {
 offer_system_package_fix() {
   local missing_commands=("$@")
   local packages=()
-  local package install_text answer mode
+  local package install_text
   while IFS= read -r package; do
     [[ -n "$package" ]] && packages+=("$package")
   done < <(unique_packages_for_commands "${missing_commands[@]}")
@@ -280,33 +324,11 @@ offer_system_package_fix() {
   warn "Install command:"
   printf '  %s\n' "$install_text" >&2
 
-  mode="${INSTALL_FIX_SYSTEM,,}"
   if ! installer_is_interactive; then
     warn "Non-interactive install will not modify system packages."
     return 1
   fi
-  case "$mode" in
-    y|yes|1|true|auto)
-      ;;
-    n|no|0|false|off|never)
-      return 1
-      ;;
-    ""|ask)
-      answer=""
-      read -r -p "$(prompt_label "Run this system package command now? [y/N]"): " answer < "$TTY" || return 1
-      case "${answer,,}" in
-        y|yes|1|true)
-          ;;
-        *)
-          return 1
-          ;;
-      esac
-      ;;
-    *)
-      warn "Unknown AMBER_INSTALL_FIX_SYSTEM value '$INSTALL_FIX_SYSTEM'; not modifying system packages."
-      return 1
-      ;;
-  esac
+  ask_yes_no "Run this system package command now?" "no" || return 1
 
   run_system_install_command "${packages[@]}"
 }
@@ -374,7 +396,8 @@ podman_probe_image() {
 run_podman_cgroup_probe() {
   local image="$1"
   local manager="$2"
-  local stderr_file="$3"
+  local enforce_limits="$3"
+  local stderr_file="$4"
   local container_name
   local command=(podman)
   container_name="amber-cgroup-probe-$$-$RANDOM"
@@ -388,6 +411,15 @@ run_podman_cgroup_probe() {
     --name "$container_name"
     --userns=keep-id
     --network=slirp4netns
+  )
+  if [[ "$enforce_limits" == "true" ]]; then
+    command+=(
+      "--memory=4g"
+      "--cpus=2"
+      "--pids-limit=512"
+    )
+  fi
+  command+=(
     --cap-drop=all
     --security-opt=no-new-privileges
     "$image"
@@ -410,90 +442,82 @@ podman_error_looks_like_cgroup_mode() {
     || "$lower" == *"nocgroups"* ]]
 }
 
-detect_codex_cgroup_fallback() {
+probe_codex_cgroup_mode() {
+  local image="$1"
+  local manager="$2"
+  local enforce_limits="$3"
+  local stderr_file
+
+  PODMAN_PROBE_ERROR=""
+  stderr_file="$(mktemp)"
+  if run_podman_cgroup_probe "$image" "$manager" "$enforce_limits" "$stderr_file"; then
+    rm -f "$stderr_file"
+    return 0
+  fi
+  PODMAN_PROBE_ERROR="$(cat "$stderr_file" 2>/dev/null || true)"
+  rm -f "$stderr_file"
+  return 1
+}
+
+apply_codex_no_limits_fallback_if_confirmed() {
+  local image="$1"
+
+  if ! podman_error_looks_like_cgroup_mode "$PODMAN_PROBE_ERROR"; then
+    warn "Codex Podman probe failed, but it did not look like a cgroup-mode error."
+    [[ -n "$PODMAN_PROBE_ERROR" ]] && warn "$PODMAN_PROBE_ERROR"
+    return 1
+  fi
+
+  warn "Codex Podman probe failed with the requested cgroup/resource-limit mode."
+  [[ -n "$PODMAN_PROBE_ERROR" ]] && warn "$PODMAN_PROBE_ERROR"
+  ask_yes_no "Try Amber's workspace-only fallback with cgroupfs and no Codex resource limits?" "yes" || return 1
+
+  if probe_codex_cgroup_mode "$image" "cgroupfs" "false"; then
+    CODEX_CGROUP_MANAGER_OVERRIDE="cgroupfs"
+    CODEX_ENFORCE_RESOURCE_LIMITS_OVERRIDE="false"
+    success "Podman fallback probe passed with cgroupfs and Codex resource limits disabled"
+    return 0
+  fi
+
+  warn "Podman fallback probe still failed; leaving Codex Podman settings unchanged."
+  [[ -n "$PODMAN_PROBE_ERROR" ]] && warn "$PODMAN_PROBE_ERROR"
+  return 1
+}
+
+configure_codex_cgroup_choice() {
   local podman_info="$1"
-  local image stderr_file default_error
+  local image
 
   CODEX_CGROUP_MANAGER_OVERRIDE=""
   CODEX_ENFORCE_RESOURCE_LIMITS_OVERRIDE=""
 
+  if ! ask_yes_no "Use cgroup-backed resource limits for the Codex sandbox?" "yes"; then
+    CODEX_ENFORCE_RESOURCE_LIMITS_OVERRIDE="false"
+    info "Codex resource limits will be disabled for this workspace."
+    if image="$(podman_probe_image)" && ! probe_codex_cgroup_mode "$image" "" "false"; then
+      apply_codex_no_limits_fallback_if_confirmed "$image" || true
+    fi
+    return 0
+  fi
+
   if image="$(podman_probe_image)"; then
-    stderr_file="$(mktemp)"
-    if run_podman_cgroup_probe "$image" "" "$stderr_file"; then
-      rm -f "$stderr_file"
-      return 1
+    info "Probing Podman with Codex cgroup-backed resource limits..."
+    if probe_codex_cgroup_mode "$image" "" "true"; then
+      success "Podman resource-limit probe passed"
+      return 0
     fi
-    default_error="$(cat "$stderr_file" 2>/dev/null || true)"
-    rm -f "$stderr_file"
-    if podman_error_looks_like_cgroup_mode "$default_error"; then
-      stderr_file="$(mktemp)"
-      if run_podman_cgroup_probe "$image" "cgroupfs" "$stderr_file"; then
-        rm -f "$stderr_file"
-        CODEX_CGROUP_MANAGER_OVERRIDE="cgroupfs"
-        CODEX_ENFORCE_RESOURCE_LIMITS_OVERRIDE="false"
-        warn "Podman cgroup probe failed with the current manager but passed with --cgroup-manager=cgroupfs."
-        return 0
-      fi
-      default_error="$(cat "$stderr_file" 2>/dev/null || true)"
-      rm -f "$stderr_file"
-      warn "Podman cgroupfs probe also failed; leaving Codex cgroup settings unchanged."
-      [[ -n "$default_error" ]] && warn "$default_error"
-    fi
-    return 1
+    apply_codex_no_limits_fallback_if_confirmed "$image" || true
+    return 0
   fi
 
   if podman_info_mentions "$podman_info" "cgroupManager" "systemd" \
     && podman_info_contains "$podman_info" "microsoft-standard-wsl"; then
-    CODEX_CGROUP_MANAGER_OVERRIDE="cgroupfs"
-    CODEX_ENFORCE_RESOURCE_LIMITS_OVERRIDE="false"
-    warn "Podman is rootless with systemd cgroups inside WSL; no local image was available for a smoke probe."
-    return 0
+    warn "Podman is rootless with systemd cgroups inside WSL, but no local image was available for a smoke probe."
+    if ask_yes_no "Apply Amber's workspace-only cgroupfs/no-limits fallback anyway?" "yes"; then
+      CODEX_CGROUP_MANAGER_OVERRIDE="cgroupfs"
+      CODEX_ENFORCE_RESOURCE_LIMITS_OVERRIDE="false"
+    fi
   fi
-  return 1
-}
-
-enable_codex_cgroup_fallback() {
-  local mode answer
-  mode="${CODEX_FIX_CGROUPS,,}"
-
-  case "$mode" in
-    y|yes|1|true|auto)
-      ;;
-    n|no|0|false|off|never)
-      warn "Not applying Amber's Codex Podman fallback. If Codex setup fails, rerun with AMBER_CODEX_FIX_CGROUPS=1."
-      CODEX_CGROUP_MANAGER_OVERRIDE=""
-      CODEX_ENFORCE_RESOURCE_LIMITS_OVERRIDE=""
-      return 1
-      ;;
-    ""|ask)
-      if ! installer_is_interactive; then
-        warn "Set AMBER_CODEX_FIX_CGROUPS=1 to let the installer apply Amber's workspace-only Podman fallback."
-        CODEX_CGROUP_MANAGER_OVERRIDE=""
-        CODEX_ENFORCE_RESOURCE_LIMITS_OVERRIDE=""
-        return 1
-      fi
-      answer=""
-      read -r -p "$(prompt_label "Apply Amber's workspace-only Podman cgroup fallback? [Y/n]"): " answer < "$TTY" || return 1
-      case "${answer,,}" in
-        ""|y|yes|1|true)
-          ;;
-        *)
-          CODEX_CGROUP_MANAGER_OVERRIDE=""
-          CODEX_ENFORCE_RESOURCE_LIMITS_OVERRIDE=""
-          return 1
-          ;;
-      esac
-      ;;
-    *)
-      warn "Unknown AMBER_CODEX_FIX_CGROUPS value '$CODEX_FIX_CGROUPS'; not changing Codex Podman settings."
-      CODEX_CGROUP_MANAGER_OVERRIDE=""
-      CODEX_ENFORCE_RESOURCE_LIMITS_OVERRIDE=""
-      return 1
-      ;;
-  esac
-
-  warn "Installer will set this workspace to codex.podman_cgroup_manager = \"cgroupfs\" and codex.enforce_resource_limits = false."
-  return 0
 }
 
 preflight_installer() {
@@ -504,7 +528,7 @@ preflight_installer() {
   local still_missing=()
   local failures=()
   local command podman_info podman_help flag
-  local required_podman_flags=(--userns --network --memory --cpus --pids-limit)
+  local required_podman_flags=(--userns --network)
 
   info "Checking host prerequisites..."
   while IFS= read -r command; do
@@ -532,10 +556,15 @@ preflight_installer() {
         && ! podman_info_mentions "$podman_info" "cgroup version" "v2"; then
         failures+=("Podman must report cgroup v2. Verify with: podman info --debug | grep -i cgroup")
       fi
-      detect_codex_cgroup_fallback "$podman_info" && enable_codex_cgroup_fallback || true
+      configure_codex_cgroup_choice "$podman_info"
     fi
-    if ! local_cgroup_v2_ok; then
+    if [[ "$CODEX_ENFORCE_RESOURCE_LIMITS_OVERRIDE" != "false" ]]; then
+      required_podman_flags+=(--memory --cpus --pids-limit)
+    fi
+    if [[ "$CODEX_ENFORCE_RESOURCE_LIMITS_OVERRIDE" != "false" ]] && ! local_cgroup_v2_ok; then
       failures+=("The host must expose a cgroup v2 mount. Verify with: stat -fc %T /sys/fs/cgroup")
+    elif [[ "$CODEX_ENFORCE_RESOURCE_LIMITS_OVERRIDE" == "false" ]] && ! local_cgroup_v2_ok; then
+      warn "The host does not expose cgroup v2; continuing because Codex resource limits are disabled."
     fi
     if ! podman_help="$(podman run --help 2>&1)"; then
       failures+=("podman run --help failed. Upgrade or repair Podman before installing Amber.")
@@ -559,12 +588,16 @@ preflight_installer() {
 prompt() {
   local label="$1"
   local value=""
-  if [[ ! -r "$TTY" ]]; then
-    error "Interactive setup requires a terminal. Set AMBER_WORKSPACE and run configure manually after install."
+  if ! installer_is_interactive; then
+    error "Interactive setup requires a terminal. Pass a workspace name as the first installer argument."
     exit 1
   fi
   while [[ -z "$value" ]]; do
-    read -r -p "$(prompt_label "$label"): " value < "$TTY"
+    read_tty_answer "$label" || {
+      error "Interactive setup requires a terminal. Pass a workspace name as the first installer argument."
+      exit 1
+    }
+    value="$TTY_ANSWER"
   done
   printf '%s' "$value"
 }
@@ -683,52 +716,16 @@ run_with_activity_progress() {
 
 confirm_tmp_package_recovery() {
   local archive="$1"
-  local answer=""
-  if [[ ! -r "$TTY" || ! -t 1 ]]; then
-    return 1
-  fi
-  if ! read -r -p "$(prompt_label "Use existing downloaded package from $archive? [Y/n]"): " answer < "$TTY"; then
-    return 1
-  fi
-  case "${answer,,}" in
-    ""|y|yes|1|true)
-      return 0
-      ;;
-    *)
-      return 1
-      ;;
-  esac
+  ask_yes_no "Use existing downloaded package from $archive?" "yes"
+}
+
+confirm_cached_archive_use() {
+  local archive="$1"
+  ask_yes_no "Use cached Amber package from $archive?" "yes"
 }
 
 recoverable_tmp_archive() {
-  local mode="${RECOVER_TMP_PACKAGE,,}"
   local archive size best best_size tmp_root
-
-  if [[ -n "$TMP_PACKAGE" ]]; then
-    if [[ -f "$TMP_PACKAGE" ]] && archive_is_readable "$TMP_PACKAGE"; then
-      printf '%s\n' "$TMP_PACKAGE"
-      return 0
-    fi
-    warn "AMBER_TMP_PACKAGE does not point to a readable Amber package: $TMP_PACKAGE"
-    return 1
-  fi
-
-  case "$mode" in
-    ""|ask)
-      if [[ ! -r "$TTY" || ! -t 1 ]]; then
-        return 1
-      fi
-      ;;
-    y|yes|1|true|auto)
-      ;;
-    n|no|0|false|off|never)
-      return 1
-      ;;
-    *)
-      warn "Unknown AMBER_RECOVER_TMP_PACKAGE value '$RECOVER_TMP_PACKAGE'; skipping tmp package recovery."
-      return 1
-      ;;
-  esac
 
   # prefer the largest readable tmp package so tiny test fixtures lose to real downloads
   best=""
@@ -747,9 +744,7 @@ recoverable_tmp_archive() {
   if [[ -z "$best" ]]; then
     return 1
   fi
-  if [[ "$mode" == "" || "$mode" == "ask" ]]; then
-    confirm_tmp_package_recovery "$best" || return 1
-  fi
+  confirm_tmp_package_recovery "$best" || return 1
   printf '%s\n' "$best"
 }
 
@@ -792,7 +787,7 @@ install_release() {
   need_command tar
   need_command mktemp
 
-  local json tag url part_urls tmp archive release_tmp release_dir cache_dir cached_archive recovered_archive no_cache
+  local json tag url part_urls tmp archive release_tmp release_dir cache_dir cached_archive recovered_archive
   # resolve the release source before choosing a local cache path
   if [[ -n "$RELEASE_ARCHIVE" ]]; then
     tag="${RELEASE_TAG:-local}"
@@ -817,10 +812,6 @@ install_release() {
   archive="$tmp/$ASSET_NAME"
   release_tmp="$tmp/release"
   release_dir="$AMBER_HOME/releases/$tag"
-  no_cache=0
-  if flag_enabled "$INSTALL_NO_CACHE"; then
-    no_cache=1
-  fi
 
   # cache normal github release downloads by tag and asset name
   if [[ -n "$RELEASE_ARCHIVE" ]]; then
@@ -832,21 +823,14 @@ install_release() {
   else
     cache_dir="$AMBER_HOME/packages/$tag"
     cached_archive="$cache_dir/$ASSET_NAME"
-    if (( no_cache )); then
-      info "Ignoring cached Amber $tag packages for this run..."
-      download_github_release_archive "$archive" "$tag" "$url" "${part_urls:-}"
-      if ! archive_is_readable "$archive"; then
-        error "Downloaded Amber $tag package is not a readable tar.gz archive."
-        exit 1
-      fi
-      copy_archive_to_cache "$archive" "$cached_archive"
-      archive="$cached_archive"
-    elif [[ -f "$cached_archive" ]] && archive_is_readable "$cached_archive"; then
-      info "Reusing downloaded Amber $tag package from $cached_archive..."
+    if [[ -f "$cached_archive" ]] && archive_is_readable "$cached_archive" && confirm_cached_archive_use "$cached_archive"; then
+      info "Using cached Amber $tag package from $cached_archive..."
       archive="$cached_archive"
     else
-      if [[ -f "$cached_archive" ]]; then
+      if [[ -f "$cached_archive" ]] && ! archive_is_readable "$cached_archive"; then
         warn "Cached Amber $tag package is not readable; downloading it again..."
+      elif [[ -f "$cached_archive" ]]; then
+        info "Downloading a fresh Amber $tag package..."
       fi
       if recovered_archive="$(recoverable_tmp_archive)"; then
         info "Recovering downloaded Amber $tag package from $recovered_archive..."
@@ -859,6 +843,7 @@ install_release() {
           exit 1
         fi
         copy_archive_to_cache "$archive" "$cached_archive"
+        archive="$cached_archive"
       fi
     fi
   fi
@@ -934,11 +919,11 @@ apply_codex_workspace_overrides() {
     return 0
   fi
   if [[ ! -f "$config_path" ]]; then
-    warn "Could not find workspace config at $config_path; Codex Podman fallback will be passed through environment only."
+    warn "Could not find workspace config at $config_path; Codex Podman settings were not changed."
     return 0
   fi
 
-  info "Applying Amber workspace Podman fallback..."
+  info "Applying Codex Podman workspace settings..."
   if [[ -n "$CODEX_CGROUP_MANAGER_OVERRIDE" ]]; then
     set_toml_key "$config_path" "codex" "podman_cgroup_manager" "\"$CODEX_CGROUP_MANAGER_OVERRIDE\""
   fi
@@ -950,51 +935,53 @@ apply_codex_workspace_overrides() {
 
 configure_workspace() {
   local workspace="$1"
-  local configure_env=()
   info "Initializing workspace $workspace..."
   "$AMBER_HOME/bin/amber" workspace init "$workspace"
   apply_codex_workspace_overrides "$workspace"
-  if [[ ! -r "$TTY" ]]; then
+
+  if ! installer_is_interactive; then
+    warn "No terminal is available for interactive workspace configuration. Run manually:"
+    echo "  $AMBER_HOME/bin/amber workspace configure $workspace" >&2
+    WORKSPACE_CONFIGURED=0
+    return 0
+  fi
+  if ! ask_yes_no "Configure Telegram, OpenAI, Linear, Codex, and GitHub now?" "yes"; then
+    info "Skipping workspace configuration. Run manually with:"
+    echo "  $AMBER_HOME/bin/amber workspace configure $workspace"
+    WORKSPACE_CONFIGURED=0
+    return 0
+  fi
+
+  info "Configuring workspace $workspace..."
+  printf '%b%s%b\n' "$COLOR_DIM" "Secret input is masked with asterisks." "$COLOR_RESET"
+  open_tty_input || {
     error "Interactive authentication requires a terminal. Run manually:"
     echo "  $AMBER_HOME/bin/amber workspace configure $workspace" >&2
     exit 1
-  fi
-  info "Configuring workspace $workspace..."
-  printf '%b%s%b\n' "$COLOR_DIM" "Secret input is masked with asterisks." "$COLOR_RESET"
-  if [[ -n "$CODEX_CGROUP_MANAGER_OVERRIDE" ]]; then
-    configure_env+=("AMBER_CODEX_CGROUP_MANAGER=$CODEX_CGROUP_MANAGER_OVERRIDE")
-  fi
-  if [[ -n "$CODEX_ENFORCE_RESOURCE_LIMITS_OVERRIDE" ]]; then
-    configure_env+=("AMBER_CODEX_ENFORCE_RESOURCE_LIMITS=$CODEX_ENFORCE_RESOURCE_LIMITS_OVERRIDE")
-  fi
-  env "${configure_env[@]}" "$AMBER_HOME/bin/amber" workspace configure "$workspace" < "$TTY"
+  }
+  "$AMBER_HOME/bin/amber" workspace configure "$workspace" <&3
+  WORKSPACE_CONFIGURED=1
 }
 
 maybe_install_service() {
   local workspace="$1"
-  local answer="${AMBER_INSTALL_SERVICE:-}"
-  if [[ -z "$answer" ]]; then
-    if [[ ! -r "$TTY" ]]; then
-      answer="n"
-    else
-      read -r -p "$(prompt_label "Start Amber automatically for this workspace with systemd --user? [y/N]"): " answer < "$TTY"
+  if (( ! WORKSPACE_CONFIGURED )); then
+    info "Skipping service setup until the workspace is configured."
+    return 0
+  fi
+  if ! ask_yes_no "Start Amber automatically for this workspace with systemd --user?" "no"; then
+    info "Skipping systemd service setup. Run manually with:"
+    echo "  $AMBER_HOME/bin/amber run --workspace $workspace"
+    return 0
+  fi
+
+  "$AMBER_HOME/bin/amber" service install --workspace "$workspace" --enable --now
+  if command -v loginctl >/dev/null 2>&1; then
+    info "Enabling linger lets this user service start after reboot without an interactive login."
+    if ! loginctl enable-linger "$USER"; then
+      warn "Could not enable linger automatically. Run manually if needed: loginctl enable-linger $USER"
     fi
   fi
-  case "${answer,,}" in
-    y|yes|1|true)
-      "$AMBER_HOME/bin/amber" service install --workspace "$workspace" --enable --now
-      if command -v loginctl >/dev/null 2>&1; then
-        info "Enabling linger lets this user service start after reboot without an interactive login."
-        if ! loginctl enable-linger "$USER"; then
-          warn "Could not enable linger automatically. Run manually if needed: loginctl enable-linger $USER"
-        fi
-      fi
-      ;;
-    *)
-      info "Skipping systemd service setup. Run manually with:"
-      echo "  $AMBER_HOME/bin/amber run --workspace $workspace"
-      ;;
-  esac
 }
 
 main() {

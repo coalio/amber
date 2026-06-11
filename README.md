@@ -32,13 +32,7 @@ Run the installer with the workspace name you want to create:
 curl -fsSL https://raw.githubusercontent.com/coalio/amber/master/installer/install.sh | bash -s -- my-workspace
 ```
 
-This checks host prerequisites, downloads the latest GitHub release, installs Amber under `~/.amber`, creates `~/.amber/workspaces/my-workspace`, runs interactive authentication, and asks whether to install the optional user service.
-
-To force a fresh package download instead of reusing `~/.amber/packages` or recovered `/tmp` downloads:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/coalio/amber/master/installer/install.sh | AMBER_INSTALL_NO_CACHE=1 bash -s -- my-workspace
-```
+This checks host prerequisites, asks before reusing cached or recovered packages, downloads the latest GitHub release when needed, installs Amber under `~/.amber`, creates `~/.amber/workspaces/my-workspace`, asks how to handle Codex sandbox cgroup/resource-limit probes, runs interactive authentication if you choose to configure the workspace immediately, and asks whether to install the optional user service.
 
 After install, the Amber binary is here:
 

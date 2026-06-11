@@ -99,6 +99,9 @@ def test_installer_downloads_split_release_without_full_asset(tmp_path: Path) ->
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Downloading split Amber v0.1.0 assets from coalio/amber..." in result.stdout
+    assert "Next steps" in result.stdout
+    assert "workspace doctor indiedreamers --external --service" in result.stdout
+    assert "Happy hacking." in result.stdout
     assert (tmp_path / ".amber" / "releases" / "v0.1.0" / "amber").exists()
     assert (tmp_path / ".amber" / "bin" / "amber").resolve() == tmp_path / ".amber" / "releases" / "v0.1.0" / "amber"
     assert fake_log.read_text(encoding="utf-8").splitlines() == [
@@ -591,9 +594,105 @@ def test_installer_auto_applies_cgroupfs_when_disabled_limits_probe_needs_it(tmp
     assert "Codex resource limits will be disabled for this workspace." in result.stdout
     assert "Trying Amber's workspace-only fallback with cgroupfs and Codex resource limits disabled..." in result.stdout
     assert "Try Amber's workspace-only fallback with cgroupfs and no Codex resource limits?" not in result.stdout
+    assert "Error: Interactive authentication required" not in result.stderr
+    assert "Run the installer with -v for the full Podman error." not in result.stderr
     config = (amber_home / "workspaces" / "indiedreamers" / "config.toml").read_text(encoding="utf-8")
     assert 'podman_cgroup_manager = "cgroupfs"' in config
     assert "enforce_resource_limits = false" in config
+
+
+def test_installer_verbose_flag_prints_full_podman_probe_error(tmp_path: Path) -> None:
+    archive = _make_release_archive(tmp_path)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _write_executable(
+        fake_bin / "podman",
+        """
+        #!/usr/bin/env bash
+        set -euo pipefail
+        if [[ "${1:-}" == "info" && "${2:-}" == "--debug" ]]; then
+          cat <<'INFO'
+        host:
+          security:
+            rootless: true
+          cgroupVersion: v2
+        INFO
+          exit 0
+        fi
+        if [[ "${1:-}" == "run" && "${2:-}" == "--help" ]]; then
+          printf '%s\\n' '--userns --network --cgroups --memory --cpus --pids-limit'
+          exit 0
+        fi
+        if [[ "${1:-}" == "image" && "${2:-}" == "exists" ]]; then
+          exit 0
+        fi
+        if [[ "${1:-}" == "--cgroup-manager=cgroupfs" && "${2:-}" == "run" ]]; then
+          exit 0
+        fi
+        if [[ "${1:-}" == "run" ]]; then
+          echo "Error: verbose podman probe detail" >&2
+          exit 125
+        fi
+        exit 0
+        """,
+    )
+    _write_executable(
+        fake_bin / "slirp4netns",
+        """
+        #!/usr/bin/env bash
+        exit 0
+        """,
+    )
+    tty = tmp_path / "tty"
+    tty.write_text("n\n\n\n", encoding="utf-8")
+    fake_log = tmp_path / "amber.log"
+    amber_home = tmp_path / ".amber"
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "AMBER_FAKE_LOG": str(fake_log),
+            "AMBER_HOME": str(amber_home),
+            "AMBER_RELEASE_ARCHIVE": str(archive),
+            "AMBER_RELEASE_TAG": "local",
+            "AMBER_TTY": str(tty),
+            "PATH": f"{fake_bin}:{env['PATH']}",
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", "installer/install.sh", "-v", "indiedreamers"],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Full Podman probe error:" in result.stderr
+    assert "Error: verbose podman probe detail" in result.stderr
+    assert "Run the installer with -v for the full Podman error." not in result.stderr
+
+
+def test_installer_help_mentions_verbose_flag_without_running_preflight() -> None:
+    result = subprocess.run(
+        ["bash", "installer/install.sh", "--help"],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "-v, --verbose" in result.stdout
+    assert "Show full Podman probe diagnostics." in result.stdout
+    assert "Checking host prerequisites" not in result.stdout
 
 
 def test_installer_preflight_fails_before_release_lookup_when_podman_is_broken(tmp_path: Path) -> None:

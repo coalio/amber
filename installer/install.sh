@@ -4,7 +4,7 @@ set -euo pipefail
 REPO="${AMBER_REPO:-coalio/amber}"
 AMBER_HOME="${AMBER_HOME:-$HOME/.amber}"
 ASSET_NAME="${AMBER_ASSET_NAME:-amber-linux-x86_64.tar.gz}"
-WORKSPACE_NAME="${1:-}"
+WORKSPACE_NAME=""
 RELEASE_ARCHIVE="${AMBER_RELEASE_ARCHIVE:-}"
 RELEASE_URL="${AMBER_RELEASE_URL:-}"
 RELEASE_TAG="${AMBER_RELEASE_TAG:-}"
@@ -12,6 +12,8 @@ CODEX_CGROUP_MANAGER_OVERRIDE=""
 CODEX_ENFORCE_RESOURCE_LIMITS_OVERRIDE=""
 PODMAN_PROBE_ERROR=""
 WORKSPACE_CONFIGURED=0
+SERVICE_INSTALLED=0
+VERBOSE=0
 TTY="${AMBER_TTY:-/dev/tty}"
 TTY_FD_OPEN=0
 TTY_ANSWER=""
@@ -38,6 +40,10 @@ heading() {
   printf '%b%s%b\n' "$COLOR_BOLD$COLOR_YELLOW" "$*" "$COLOR_RESET"
 }
 
+section() {
+  printf '\n%b%s%b\n' "$COLOR_BOLD" "$*" "$COLOR_RESET"
+}
+
 info() {
   printf '%b==>%b %s\n' "$COLOR_BLUE" "$COLOR_RESET" "$*"
 }
@@ -56,6 +62,52 @@ error() {
 
 prompt_label() {
   printf '%b%s%b' "$COLOR_BOLD" "$1" "$COLOR_RESET"
+}
+
+installer_verbose() {
+  (( VERBOSE ))
+}
+
+usage() {
+  cat <<'USAGE'
+Usage: install.sh [workspace-name] [-v|--verbose]
+
+Options:
+  -v, --verbose  Show full Podman probe diagnostics.
+
+Examples:
+  curl -fsSL https://raw.githubusercontent.com/coalio/amber/master/installer/install.sh | bash -s -- my-workspace
+USAGE
+}
+
+parse_args() {
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      -v|--verbose)
+        VERBOSE=1
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      --)
+        ;;
+      -*)
+        error "Unknown installer option: $arg"
+        usage >&2
+        exit 1
+        ;;
+      *)
+        if [[ -n "$WORKSPACE_NAME" ]]; then
+          error "Only one workspace name can be passed to the installer."
+          usage >&2
+          exit 1
+        fi
+        WORKSPACE_NAME="$arg"
+        ;;
+    esac
+  done
 }
 
 progress_enabled() {
@@ -442,6 +494,46 @@ podman_error_looks_like_cgroup_mode() {
     || "$lower" == *"nocgroups"* ]]
 }
 
+podman_probe_error_summary() {
+  local message="$1"
+  local lower
+  lower="$(printf '%s' "$message" | tr '[:upper:]' '[:lower:]')"
+
+  if [[ "$lower" == *"interactive authentication required"* ]]; then
+    printf '%s\n' "Podman could not start a rootless container with its default cgroup manager: interactive authentication required."
+    return
+  fi
+  if [[ "$lower" == *"unable to apply cgroup configuration"* ]]; then
+    printf '%s\n' "Podman could not apply its cgroup configuration for the sandbox probe."
+    return
+  fi
+  if [[ "$lower" == *"could not find cgroup mount"* ]]; then
+    printf '%s\n' "Podman could not find a usable cgroup mount for the sandbox probe."
+    return
+  fi
+  if [[ "$lower" == *"not compatible with nocgroups"* || "$lower" == *"nocgroups"* ]]; then
+    printf '%s\n' "Podman rejected the current cgroup mode for this sandbox probe."
+    return
+  fi
+  printf '%s\n' "Podman failed the sandbox probe."
+}
+
+show_podman_probe_error() {
+  local message="$1"
+  local line
+  [[ -n "$message" ]] || return 0
+
+  if installer_verbose; then
+    warn "Full Podman probe error:"
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && warn "  $line"
+    done <<< "$message"
+    return 0
+  fi
+
+  warn "$(podman_probe_error_summary "$message")"
+}
+
 probe_codex_cgroup_mode() {
   local image="$1"
   local manager="$2"
@@ -466,12 +558,12 @@ apply_codex_no_limits_fallback() {
 
   if ! podman_error_looks_like_cgroup_mode "$PODMAN_PROBE_ERROR"; then
     warn "Codex Podman probe failed, but it did not look like a cgroup-mode error."
-    [[ -n "$PODMAN_PROBE_ERROR" ]] && warn "$PODMAN_PROBE_ERROR"
+    show_podman_probe_error "$PODMAN_PROBE_ERROR"
     return 1
   fi
 
   warn "$failure_message"
-  [[ -n "$PODMAN_PROBE_ERROR" ]] && warn "$PODMAN_PROBE_ERROR"
+  show_podman_probe_error "$PODMAN_PROBE_ERROR"
   if [[ "$require_confirmation" == "true" ]]; then
     ask_yes_no "Try Amber's workspace-only fallback with cgroupfs and no Codex resource limits?" "yes" || return 1
   else
@@ -486,7 +578,7 @@ apply_codex_no_limits_fallback() {
   fi
 
   warn "Podman fallback probe still failed; leaving Codex Podman settings unchanged."
-  [[ -n "$PODMAN_PROBE_ERROR" ]] && warn "$PODMAN_PROBE_ERROR"
+  show_podman_probe_error "$PODMAN_PROBE_ERROR"
   return 1
 }
 
@@ -999,6 +1091,7 @@ maybe_install_service() {
   fi
 
   "$AMBER_HOME/bin/amber" service install --workspace "$workspace" --enable --now
+  SERVICE_INSTALLED=1
   if command -v loginctl >/dev/null 2>&1; then
     info "Enabling linger lets this user service start after reboot without an interactive login."
     if ! loginctl enable-linger "$USER"; then
@@ -1007,16 +1100,65 @@ maybe_install_service() {
   fi
 }
 
+shell_quote() {
+  printf '%q' "$1"
+}
+
+print_next_steps() {
+  local workspace="$1"
+  local amber_bin="$AMBER_HOME/bin/amber"
+  local quoted_workspace quoted_amber_bin
+
+  quoted_workspace="$(shell_quote "$workspace")"
+  quoted_amber_bin="$(shell_quote "$amber_bin")"
+
+  section "Next steps"
+  printf 'Amber is installed.\n\n'
+  printf 'Workspace: %s\n' "$workspace"
+  printf 'Binary:    %s\n\n' "$amber_bin"
+
+  if (( WORKSPACE_CONFIGURED )); then
+    printf 'Check the workspace:\n'
+    printf '  %s workspace doctor %s --external --service\n\n' "$quoted_amber_bin" "$quoted_workspace"
+  else
+    printf 'Finish configuration:\n'
+    printf '  %s workspace configure %s\n\n' "$quoted_amber_bin" "$quoted_workspace"
+    printf 'Then check the workspace:\n'
+    printf '  %s workspace doctor %s --external --service\n\n' "$quoted_amber_bin" "$quoted_workspace"
+  fi
+
+  if (( SERVICE_INSTALLED )); then
+    printf 'Manage the user service:\n'
+    printf '  %s service status --workspace %s\n' "$quoted_amber_bin" "$quoted_workspace"
+    printf '  %s service stop --workspace %s\n' "$quoted_amber_bin" "$quoted_workspace"
+    printf '  %s service start --workspace %s\n\n' "$quoted_amber_bin" "$quoted_workspace"
+  else
+    printf 'Run Amber in the foreground:\n'
+    printf '  %s run --workspace %s\n\n' "$quoted_amber_bin" "$quoted_workspace"
+    if (( WORKSPACE_CONFIGURED )); then
+      printf 'Install the optional user service later:\n'
+      printf '  %s service install --workspace %s --enable --now\n\n' "$quoted_amber_bin" "$quoted_workspace"
+    fi
+  fi
+
+  printf 'Happy hacking.\n'
+}
+
 main() {
+  parse_args "$@"
   heading "Amber"
+  section "Check host"
   preflight_installer
+  section "Install Amber"
   install_release
   if [[ -z "$WORKSPACE_NAME" ]]; then
     WORKSPACE_NAME="$(prompt "Workspace name")"
   fi
+  section "Configure workspace"
   configure_workspace "$WORKSPACE_NAME"
+  section "Start options"
   maybe_install_service "$WORKSPACE_NAME"
-  success "Amber is installed at $AMBER_HOME/bin/amber"
+  print_next_steps "$WORKSPACE_NAME"
 }
 
 main "$@"

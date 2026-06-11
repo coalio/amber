@@ -17,6 +17,8 @@ CODEX_ENFORCE_RESOURCE_LIMITS_OVERRIDE=""
 PODMAN_PROBE_ERROR=""
 WORKSPACE_CONFIGURED=0
 SERVICE_INSTALLED=0
+PATH_RC_FILE=""
+PATH_CONFIGURED=0
 VERBOSE=0
 TTY="${AMBER_TTY:-/dev/tty}"
 TTY_FD_OPEN=0
@@ -233,12 +235,14 @@ prompt_choice_index() {
   local selected="$2"
   shift 2
   local options=("$@")
-  local key rest line_count option_count
+  local key rest line_count option_count changed
   option_count="${#options[@]}"
-  line_count=$((option_count + 2))
+  line_count=$((option_count + 1))
 
+  # redraw exactly the lines printed by draw_choice_menu so navigation does not duplicate options
   draw_choice_menu "$label" "$selected" "${options[@]}"
   while IFS= read -rsn1 key <&3; do
+    changed=0
     case "$key" in
       "")
         printf '\n' >&2
@@ -251,24 +255,33 @@ prompt_choice_index() {
         case "$rest" in
           "[A")
             selected=$(((selected + option_count - 1) % option_count))
+            changed=1
             ;;
           "[B")
             selected=$(((selected + 1) % option_count))
+            changed=1
             ;;
         esac
         ;;
       k|K)
         selected=$(((selected + option_count - 1) % option_count))
+        changed=1
         ;;
       j|J)
         selected=$(((selected + 1) % option_count))
+        changed=1
         ;;
       [1-9])
         if (( key >= 1 && key <= option_count )); then
           selected=$((key - 1))
+          changed=1
         fi
         ;;
     esac
+    if (( ! changed )); then
+      continue
+    fi
+    # move back to the prompt line before painting the current selection state
     printf '\033[%dA' "$line_count" >&2
     draw_choice_menu "$label" "$selected" "${options[@]}"
   done
@@ -421,6 +434,124 @@ amber_log_to_stderr() {
 
 run_amber() {
   AMBER_LOG_TO_STDERR="$(amber_log_to_stderr)" "$AMBER_HOME/bin/amber" "$@"
+}
+
+amber_bin_dir() {
+  printf '%s/bin' "$AMBER_HOME"
+}
+
+shell_single_quote() {
+  printf "'"
+  printf '%s' "$1" | sed "s/'/'\\\\''/g"
+  printf "'"
+}
+
+path_export_line() {
+  local bin_dir="$1"
+  if [[ "$bin_dir" == "$HOME/.amber/bin" ]]; then
+    printf 'export PATH="$HOME/.amber/bin:$PATH"'
+    return
+  fi
+
+  # preserve literal custom paths before the live PATH expansion
+  printf 'export PATH=%s:"$PATH"' "$(shell_single_quote "$bin_dir")"
+}
+
+shell_rc_candidates() {
+  local shell_name="${SHELL##*/}"
+  case "$shell_name" in
+    zsh)
+      printf '%s\n' "$HOME/.zshrc" "$HOME/.zprofile" "$HOME/.profile" "$HOME/.bashrc"
+      ;;
+    bash)
+      printf '%s\n' "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile" "$HOME/.zshrc"
+      ;;
+    *)
+      printf '%s\n' "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile" "$HOME/.bash_profile"
+      ;;
+  esac
+}
+
+default_shell_rc_file() {
+  local shell_name="${SHELL##*/}"
+  case "$shell_name" in
+    zsh)
+      printf '%s' "$HOME/.zshrc"
+      ;;
+    bash)
+      printf '%s' "$HOME/.bashrc"
+      ;;
+    *)
+      printf '%s' "$HOME/.profile"
+      ;;
+  esac
+}
+
+detect_shell_rc_file() {
+  local candidate
+  if [[ -n "${AMBER_SHELL_RC:-}" ]]; then
+    printf '%s' "$AMBER_SHELL_RC"
+    return
+  fi
+
+  # prefer the active shell's existing rc file, then create the shell's default
+  while IFS= read -r candidate; do
+    if [[ -f "$candidate" ]]; then
+      printf '%s' "$candidate"
+      return
+    fi
+  done < <(shell_rc_candidates)
+  default_shell_rc_file
+}
+
+rc_file_has_amber_path() {
+  local rc_file="$1"
+  local bin_dir="$2"
+  [[ -f "$rc_file" ]] || return 1
+
+  # treat common literal forms as already configured to avoid duplicate path edits
+  grep -Fq "$bin_dir" "$rc_file" && return 0
+  if [[ "$bin_dir" == "$HOME/.amber/bin" ]]; then
+    grep -Fq '$HOME/.amber/bin' "$rc_file" && return 0
+    grep -Fq '${HOME}/.amber/bin' "$rc_file" && return 0
+  fi
+  return 1
+}
+
+configure_shell_path() {
+  local bin_dir rc_file rc_dir export_line
+  bin_dir="$(amber_bin_dir)"
+
+  # only edit user startup files for installs rooted inside HOME
+  if [[ -z "${HOME:-}" || "$bin_dir" != "$HOME/"* ]]; then
+    return 0
+  fi
+
+  rc_file="$(detect_shell_rc_file)"
+  rc_dir="$(dirname "$rc_file")"
+  export_line="$(path_export_line "$bin_dir")"
+  PATH_RC_FILE="$rc_file"
+
+  if rc_file_has_amber_path "$rc_file" "$bin_dir"; then
+    PATH_CONFIGURED=1
+    info "Amber is already on PATH in $rc_file."
+    return 0
+  fi
+
+  # append an idempotent shell startup entry without disrupting existing rc contents
+  if ! mkdir -p "$rc_dir"; then
+    warn "Could not create shell config directory $rc_dir; Amber PATH was not updated."
+    return 0
+  fi
+  if {
+    printf '\n# Amber CLI\n'
+    printf '%s\n' "$export_line"
+  } >> "$rc_file"; then
+    PATH_CONFIGURED=1
+    info "Added Amber to PATH in $rc_file."
+  else
+    warn "Could not update $rc_file; add $(amber_bin_dir) to PATH manually."
+  fi
 }
 
 join_words() {
@@ -1265,24 +1396,26 @@ configure_workspace() {
   apply_codex_workspace_overrides "$workspace"
   apply_full_release_workspace_overrides "$workspace"
 
+  # leave a direct follow-up command when setup cannot continue interactively
   if ! installer_is_interactive; then
     warn "No terminal is available for interactive workspace configuration. Run manually:"
-    echo "  $AMBER_HOME/bin/amber workspace configure $workspace" >&2
+    print_amber_command_stderr workspace configure "$workspace"
     WORKSPACE_CONFIGURED=0
     return 0
   fi
   if ! ask_yes_no "Configure Telegram, OpenAI, Linear, Codex, and GitHub now?" "yes"; then
     info "Skipping workspace configuration. Run manually with:"
-    echo "  $AMBER_HOME/bin/amber workspace configure $workspace"
+    print_amber_command workspace configure "$workspace"
     WORKSPACE_CONFIGURED=0
     return 0
   fi
 
+  # hand the same terminal to Amber so secret prompts and nested auth flows stay interactive
   info "Configuring workspace $workspace..."
   printf '%b%s%b\n' "$COLOR_DIM" "Secret input is masked with asterisks." "$COLOR_RESET"
   open_tty_input || {
     error "Interactive authentication requires a terminal. Run manually:"
-    echo "  $AMBER_HOME/bin/amber workspace configure $workspace" >&2
+    print_amber_command_stderr workspace configure "$workspace"
     exit 1
   }
   run_amber workspace configure "$workspace" <&3
@@ -1297,7 +1430,7 @@ maybe_install_service() {
   fi
   if ! ask_yes_no "Start Amber automatically for this workspace with systemd --user?" "no"; then
     info "Skipping systemd service setup. Run manually with:"
-    echo "  $AMBER_HOME/bin/amber run --workspace $workspace"
+    print_amber_command run --workspace "$workspace"
     return 0
   fi
 
@@ -1315,40 +1448,63 @@ shell_quote() {
   printf '%q' "$1"
 }
 
+print_amber_command() {
+  local arg
+  printf '  %bamber%b' "$COLOR_BOLD$COLOR_GREEN" "$COLOR_RESET"
+  for arg in "$@"; do
+    printf ' %s' "$(shell_quote "$arg")"
+  done
+  printf '\n'
+}
+
+print_amber_command_stderr() {
+  print_amber_command "$@" >&2
+}
+
 print_next_steps() {
   local workspace="$1"
-  local amber_bin="$AMBER_HOME/bin/amber"
-  local quoted_workspace quoted_amber_bin
-
-  quoted_workspace="$(shell_quote "$workspace")"
-  quoted_amber_bin="$(shell_quote "$amber_bin")"
 
   section "Next steps"
   printf 'Amber is installed.\n\n'
   printf 'Workspace: %s\n' "$workspace"
-  printf 'Binary:    %s\n\n' "$amber_bin"
 
-  if (( WORKSPACE_CONFIGURED )); then
-    printf 'Check the workspace:\n'
-    printf '  %s workspace doctor %s --external --service\n\n' "$quoted_amber_bin" "$quoted_workspace"
+  # show the user-facing command, not the release-specific symlink target
+  printf 'Command:   %bamber%b\n' "$COLOR_BOLD$COLOR_GREEN" "$COLOR_RESET"
+  if (( PATH_CONFIGURED )) && [[ -n "$PATH_RC_FILE" ]]; then
+    printf 'PATH:      %s\n\n' "$PATH_RC_FILE"
   else
-    printf 'Finish configuration:\n'
-    printf '  %s workspace configure %s\n\n' "$quoted_amber_bin" "$quoted_workspace"
-    printf 'Then check the workspace:\n'
-    printf '  %s workspace doctor %s --external --service\n\n' "$quoted_amber_bin" "$quoted_workspace"
+    printf '\n'
   fi
 
+  # tailor the next setup command to whether interactive configuration already ran
+  if (( WORKSPACE_CONFIGURED )); then
+    printf 'Check the workspace:\n'
+    print_amber_command workspace doctor "$workspace" --external --service
+    printf '\n'
+  else
+    printf 'Finish configuration:\n'
+    print_amber_command workspace configure "$workspace"
+    printf '\n'
+    printf 'Then check the workspace:\n'
+    print_amber_command workspace doctor "$workspace" --external --service
+    printf '\n'
+  fi
+
+  # keep service management commands visible only when they match the chosen startup mode
   if (( SERVICE_INSTALLED )); then
     printf 'Manage the user service:\n'
-    printf '  %s service status --workspace %s\n' "$quoted_amber_bin" "$quoted_workspace"
-    printf '  %s service stop --workspace %s\n' "$quoted_amber_bin" "$quoted_workspace"
-    printf '  %s service start --workspace %s\n\n' "$quoted_amber_bin" "$quoted_workspace"
+    print_amber_command service status --workspace "$workspace"
+    print_amber_command service stop --workspace "$workspace"
+    print_amber_command service start --workspace "$workspace"
+    printf '\n'
   else
     printf 'Run Amber in the foreground:\n'
-    printf '  %s run --workspace %s\n\n' "$quoted_amber_bin" "$quoted_workspace"
+    print_amber_command run --workspace "$workspace"
+    printf '\n'
     if (( WORKSPACE_CONFIGURED )); then
       printf 'Install the optional user service later:\n'
-      printf '  %s service install --workspace %s --enable --now\n\n' "$quoted_amber_bin" "$quoted_workspace"
+      print_amber_command service install --workspace "$workspace" --enable --now
+      printf '\n'
     fi
   fi
 
@@ -1363,6 +1519,7 @@ main() {
   section "Install Amber"
   configure_release_asset_choice
   install_release
+  configure_shell_path
   if [[ -z "$WORKSPACE_NAME" ]]; then
     WORKSPACE_NAME="$(prompt "Workspace name")"
   fi

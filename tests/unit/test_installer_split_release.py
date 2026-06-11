@@ -151,6 +151,60 @@ def test_installer_suppresses_amber_json_logs_when_not_verbose(tmp_path: Path) -
     assert "codex.progress" not in result.stderr
 
 
+def test_installer_adds_amber_bin_to_detected_shell_rc_and_prints_amber_command(tmp_path: Path) -> None:
+    archive = _make_release_archive(tmp_path)
+
+    home = tmp_path / "home"
+    home.mkdir()
+    zshrc = home / ".zshrc"
+    zshrc.write_text("# user shell config\n", encoding="utf-8")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _add_fake_installer_prereqs(fake_bin)
+    tty = tmp_path / "tty"
+    tty.write_text("", encoding="utf-8")
+    fake_log = tmp_path / "amber.log"
+    amber_home = home / ".amber"
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "AMBER_FAKE_LOG": str(fake_log),
+            "AMBER_HOME": str(amber_home),
+            "AMBER_RELEASE_ARCHIVE": str(archive),
+            "AMBER_RELEASE_TAG": "local",
+            "AMBER_TTY": str(tty),
+            "HOME": str(home),
+            "PATH": f"{fake_bin}:{env['PATH']}",
+            "SHELL": "/bin/zsh",
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", "installer/install.sh", "indiedreamers"],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"Added Amber to PATH in {zshrc}." in result.stdout
+    assert f"PATH:      {zshrc}" in result.stdout
+    assert "Command:   amber" in result.stdout
+    assert "  amber workspace doctor indiedreamers --external --service" in result.stdout
+    assert f"{amber_home}/bin/amber workspace" not in result.stdout
+    assert zshrc.read_text(encoding="utf-8").splitlines() == [
+        "# user shell config",
+        "",
+        "# Amber CLI",
+        'export PATH="$HOME/.amber/bin:$PATH"',
+    ]
+
+
 def test_installer_can_install_full_modernbert_release(tmp_path: Path) -> None:
     archive = _make_release_archive(tmp_path)
 
@@ -833,6 +887,13 @@ def test_installer_help_mentions_verbose_flag_without_running_preflight() -> Non
     assert "--standard" not in result.stdout
     assert "Show full Podman probe diagnostics and Amber setup logs." in result.stdout
     assert "Checking host prerequisites" not in result.stdout
+
+
+def test_installer_choice_menu_redraw_matches_rendered_line_count() -> None:
+    content = (ROOT / "installer" / "install.sh").read_text(encoding="utf-8")
+
+    assert "line_count=$((option_count + 1))" in content
+    assert "line_count=$((option_count + 2))" not in content
 
 
 def test_installer_preflight_fails_before_release_lookup_when_podman_is_broken(tmp_path: Path) -> None:

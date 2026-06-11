@@ -22,7 +22,7 @@ Amber currently expects a Linux user environment with:
 
 The installer checks local commands, rootless Podman, cgroup v2, `slirp4netns`, and required `podman run` flags before it downloads the Amber release. It can offer an interactive package install for missing system packages, but it will not modify system packages in non-interactive runs. It cannot create external accounts for you.
 
-Amber uses lightweight heuristic attention scoring by default. The optional local ModernBERT scorer can run on CPU, but it requires Torch/Transformers and is intentionally excluded from the default install because those packages add gigabytes to the release.
+Amber uses lightweight heuristic attention scoring by default. The installer can also install the full package with the local ModernBERT scorer, but it requires Torch/Transformers and adds roughly 2 GB to the release.
 
 ## Install
 
@@ -32,7 +32,7 @@ Run the installer with the workspace name you want to create:
 curl -fsSL https://raw.githubusercontent.com/coalio/amber/master/installer/install.sh | bash -s -- my-workspace
 ```
 
-This checks host prerequisites, asks before reusing cached or recovered packages, downloads the latest GitHub release when needed, installs Amber under `~/.amber`, creates `~/.amber/workspaces/my-workspace`, asks how to handle Codex sandbox cgroup/resource-limit probes, runs interactive authentication if you choose to configure the workspace immediately, and asks whether to install the optional user service.
+This checks host prerequisites, lets you choose the standard or full local-ML package, asks before reusing cached or recovered packages, downloads the latest GitHub release when needed, installs Amber under `~/.amber`, creates `~/.amber/workspaces/my-workspace`, asks how to handle Codex sandbox cgroup/resource-limit probes, runs interactive authentication if you choose to configure the workspace immediately, and asks whether to install the optional user service.
 
 After install, the Amber binary is here:
 
@@ -130,7 +130,7 @@ pip install -r requirements-ml.txt
 AMBER_ATTENTION_SCORER=modernbert AMBER_ATTENTION_DEVICE=cpu python main.py run --workspace my-workspace
 ```
 
-Default release binaries do not include this scorer. Maintainers can build a separate heavy ML release with `AMBER_BUILD_ML=1`.
+The installer can install the full release package and enable `attention.scorer = "modernbert"` for the workspace. Maintainers can build that heavy package with `AMBER_BUILD_ML=1`.
 
 ## Developer Docs
 

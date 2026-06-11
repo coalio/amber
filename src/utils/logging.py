@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from collections.abc import Callable
 from datetime import datetime, timezone
 from functools import wraps
@@ -43,7 +44,7 @@ def configure_logging(
         isinstance(handler, logging.StreamHandler) and not isinstance(handler, logging.FileHandler)
         for handler in root.handlers
     )
-    if not has_stream_handler:
+    if not has_stream_handler and _log_to_stderr_enabled():
         handler = logging.StreamHandler()
         handler.setFormatter(JsonFormatter())
         root.addHandler(handler)
@@ -64,6 +65,13 @@ def get_logger(name: str) -> logging.Logger:
 
 def current_run_log_path() -> Path | None:
     return _RUN_LOG_PATH
+
+
+def _log_to_stderr_enabled() -> bool:
+    value = os.getenv("AMBER_LOG_TO_STDERR")
+    if value is None:
+        return True
+    return value.strip().lower() not in {"0", "false", "no", "off"}
 
 
 def _new_run_log_path(log_dir: Path, timezone_name: str) -> Path:

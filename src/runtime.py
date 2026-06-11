@@ -124,7 +124,7 @@ def build_application(
             poll_seconds=linear_config.poll_seconds,
             due_window_days=linear_config.due_window_days,
         )
-    scorer = _build_attention_scorer(attention_scorer)
+    scorer = _build_attention_scorer(attention_scorer, mode=settings.attention_scorer)
     receiver = None
     telegram_client = None
     if transport is None:
@@ -188,13 +188,13 @@ def build_application(
     )
 
 
-def _build_attention_scorer(override: object | None = None) -> object | None:
+def _build_attention_scorer(override: object | None = None, *, mode: str | None = None) -> object | None:
     if override is not None:
         return override
-    mode = os.getenv("AMBER_ATTENTION_SCORER", "heuristic").strip().lower()
-    if mode in {"", "heuristic", "heuristics", "none", "off"}:
+    scorer_mode = (mode if mode is not None else os.getenv("AMBER_ATTENTION_SCORER", "heuristic")).strip().lower()
+    if scorer_mode in {"", "heuristic", "heuristics", "none", "off"}:
         return None
-    if mode not in {"modernbert", "zero-shot", "zero_shot", "local-ml", "local_ml"}:
+    if scorer_mode not in {"modernbert", "zero-shot", "zero_shot", "local-ml", "local_ml"}:
         raise RuntimeError("AMBER_ATTENTION_SCORER must be heuristic or modernbert.")
     try:
         module = importlib.import_module("src.attention.scoring.zero_shot")

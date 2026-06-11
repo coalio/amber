@@ -65,9 +65,9 @@ source venv/bin/activate
 scripts/build_release.sh
 ```
 
-The build writes `dist/amber-linux-x86_64.tar.gz` and a SHA256 file. If the archive is larger than the configured split size, the script also creates `dist/amber-linux-x86_64.tar.gz.part-*`.
+The standard build writes `dist/amber-linux-x86_64.tar.gz` and a SHA256 file. If the archive is larger than the configured split size, the script also creates `dist/amber-linux-x86_64.tar.gz.part-*`.
 
-Default release builds exclude Torch, Transformers, CUDA/NVIDIA libraries, and related scientific packages. Build a separate heavy local-ML package with:
+Default release builds exclude Torch, Transformers, CUDA/NVIDIA libraries, and related scientific packages. Build the separate full local-ML package as `dist/amber-linux-x86_64-full.tar.gz` with:
 
 ```bash
 AMBER_BUILD_ML=1 scripts/build_release.sh
@@ -83,6 +83,8 @@ The installer defaults to the latest `coalio/amber` GitHub release. Maintainers 
 - `AMBER_RELEASE_URL` installs from a specific archive URL.
 - `AMBER_RELEASE_TAG` controls the release directory name for manual installs.
 - `AMBER_ASSET_NAME` changes the expected release asset name.
+- `AMBER_INSTALL_VARIANT=standard|full` selects the default or full release asset.
+- `AMBER_FULL_ASSET_NAME` changes the expected full release asset name.
 
 Example local archive install:
 

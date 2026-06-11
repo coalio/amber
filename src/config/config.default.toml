@@ -38,6 +38,7 @@ conversation_window_before = 15
 conversation_window_after = 15
 
 [attention]
+scorer = "heuristic"
 surface_threshold = 0.48
 urgent_threshold = 0.72
 memory_limit = 3

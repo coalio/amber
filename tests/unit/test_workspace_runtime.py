@@ -30,6 +30,7 @@ def test_workspace_init_creates_fixed_layout(monkeypatch, tmp_path) -> None:
 
 def test_settings_load_workspace_toml_and_env_overrides(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("AMBER_HOME", str(tmp_path / ".amber"))
+    monkeypatch.setenv("AMBER_ATTENTION_SCORER", "modernbert")
     monkeypatch.setenv("AMBER_AI_MODEL", "gpt-test")
     get_settings.cache_clear()
 
@@ -37,6 +38,7 @@ def test_settings_load_workspace_toml_and_env_overrides(monkeypatch, tmp_path) -
     settings = get_settings("indiedreamers")
 
     assert settings.workspace_dir == workspace
+    assert settings.attention_scorer == "modernbert"
     assert settings.ai_model == "gpt-test"
     assert settings.codex_container_name == "amber-indiedreamers-codex"
     assert settings.codex_podman_cgroup_manager is None

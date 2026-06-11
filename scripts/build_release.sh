@@ -6,7 +6,8 @@ PYTHON="${PYTHON:-$ROOT/venv/bin/python}"
 DIST_DIR="$ROOT/dist"
 BUILD_DIR="$ROOT/build"
 APP_NAME="amber"
-ASSET_NAME="${AMBER_ASSET_NAME:-amber-linux-x86_64.tar.gz}"
+DEFAULT_ASSET_NAME="amber-linux-x86_64.tar.gz"
+FULL_ASSET_NAME="${AMBER_FULL_ASSET_NAME:-amber-linux-x86_64-full.tar.gz}"
 SPLIT_SIZE="${AMBER_SPLIT_SIZE:-1900M}"
 BUILD_ML="${AMBER_BUILD_ML:-}"
 
@@ -20,6 +21,14 @@ flag_enabled() {
       ;;
   esac
 }
+
+if [[ -n "${AMBER_ASSET_NAME:-}" ]]; then
+  ASSET_NAME="$AMBER_ASSET_NAME"
+elif flag_enabled "$BUILD_ML"; then
+  ASSET_NAME="$FULL_ASSET_NAME"
+else
+  ASSET_NAME="$DEFAULT_ASSET_NAME"
+fi
 
 if [[ ! -x "$PYTHON" ]]; then
   PYTHON="$(command -v python3.14 || command -v python3)"

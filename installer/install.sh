@@ -3,7 +3,11 @@ set -euo pipefail
 
 REPO="${AMBER_REPO:-coalio/amber}"
 AMBER_HOME="${AMBER_HOME:-$HOME/.amber}"
-ASSET_NAME="${AMBER_ASSET_NAME:-amber-linux-x86_64.tar.gz}"
+DEFAULT_ASSET_NAME="amber-linux-x86_64.tar.gz"
+FULL_ASSET_NAME="${AMBER_FULL_ASSET_NAME:-amber-linux-x86_64-full.tar.gz}"
+ASSET_NAME_OVERRIDE="${AMBER_ASSET_NAME:-}"
+ASSET_NAME="${ASSET_NAME_OVERRIDE:-$DEFAULT_ASSET_NAME}"
+INSTALL_VARIANT="${AMBER_INSTALL_VARIANT:-}"
 WORKSPACE_NAME=""
 RELEASE_ARCHIVE="${AMBER_RELEASE_ARCHIVE:-}"
 RELEASE_URL="${AMBER_RELEASE_URL:-}"
@@ -70,10 +74,12 @@ installer_verbose() {
 
 usage() {
   cat <<'USAGE'
-Usage: install.sh [workspace-name] [-v|--verbose]
+Usage: install.sh [workspace-name] [--standard|--full] [-v|--verbose]
 
 Options:
-  -v, --verbose  Show full Podman probe diagnostics.
+  --standard     Install the standard Amber package without local ML dependencies.
+  --full, --ml   Install the full Amber package with the local ModernBERT scorer.
+  -v, --verbose  Show full Podman probe diagnostics and Amber setup logs.
 
 Examples:
   curl -fsSL https://raw.githubusercontent.com/coalio/amber/master/installer/install.sh | bash -s -- my-workspace
@@ -86,6 +92,12 @@ parse_args() {
     case "$arg" in
       -v|--verbose)
         VERBOSE=1
+        ;;
+      --standard)
+        INSTALL_VARIANT="standard"
+        ;;
+      --full|--ml)
+        INSTALL_VARIANT="full"
         ;;
       -h|--help)
         usage
@@ -228,6 +240,68 @@ ask_yes_no() {
     return
   fi
   answer_is_yes "$answer"
+}
+
+normalize_install_variant() {
+  local value="${1,,}"
+  case "$value" in
+    standard|default|lite|minimal)
+      printf 'standard'
+      ;;
+    full|ml|modernbert|bert)
+      printf 'full'
+      ;;
+    *)
+      error "Unknown Amber install variant: $1"
+      error "Use 'standard' or 'full'."
+      exit 1
+      ;;
+  esac
+}
+
+configure_release_asset_choice() {
+  if [[ -n "$INSTALL_VARIANT" ]]; then
+    INSTALL_VARIANT="$(normalize_install_variant "$INSTALL_VARIANT")"
+    if [[ -z "$ASSET_NAME_OVERRIDE" ]]; then
+      if [[ "$INSTALL_VARIANT" == "full" ]]; then
+        ASSET_NAME="$FULL_ASSET_NAME"
+      else
+        ASSET_NAME="$DEFAULT_ASSET_NAME"
+      fi
+    fi
+  elif [[ -n "$ASSET_NAME_OVERRIDE" || -n "$RELEASE_ARCHIVE" || -n "$RELEASE_URL" ]]; then
+    INSTALL_VARIANT="custom"
+  elif installer_is_interactive && ask_yes_no "Install full Amber package with local ModernBERT scorer (~2 GB)?" "no"; then
+    INSTALL_VARIANT="full"
+    ASSET_NAME="$FULL_ASSET_NAME"
+  else
+    INSTALL_VARIANT="standard"
+    ASSET_NAME="$DEFAULT_ASSET_NAME"
+  fi
+
+  case "$INSTALL_VARIANT" in
+    full)
+      info "Using full Amber package with local ModernBERT scorer: $ASSET_NAME"
+      ;;
+    standard)
+      info "Using standard Amber package: $ASSET_NAME"
+      ;;
+    custom)
+      info "Using custom Amber package source: $ASSET_NAME"
+      ;;
+  esac
+}
+
+amber_log_to_stderr() {
+  if installer_verbose; then
+    printf '1'
+  else
+    printf '0'
+  fi
+}
+
+run_amber() {
+  AMBER_LOG_TO_STDERR="$(amber_log_to_stderr)" "$AMBER_HOME/bin/amber" "$@"
 }
 
 join_words() {
@@ -1048,11 +1122,29 @@ apply_codex_workspace_overrides() {
   chmod 600 "$config_path" || true
 }
 
+apply_full_release_workspace_overrides() {
+  local workspace="$1"
+  local config_path="$AMBER_HOME/workspaces/$workspace/config.toml"
+
+  if [[ "$INSTALL_VARIANT" != "full" ]]; then
+    return 0
+  fi
+  if [[ ! -f "$config_path" ]]; then
+    warn "Could not find workspace config at $config_path; local ML attention scoring was not enabled."
+    return 0
+  fi
+
+  info "Enabling local ModernBERT attention scorer for this workspace..."
+  set_toml_key "$config_path" "attention" "scorer" "\"modernbert\""
+  chmod 600 "$config_path" || true
+}
+
 configure_workspace() {
   local workspace="$1"
   info "Initializing workspace $workspace..."
-  "$AMBER_HOME/bin/amber" workspace init "$workspace"
+  run_amber workspace init "$workspace"
   apply_codex_workspace_overrides "$workspace"
+  apply_full_release_workspace_overrides "$workspace"
 
   if ! installer_is_interactive; then
     warn "No terminal is available for interactive workspace configuration. Run manually:"
@@ -1074,7 +1166,7 @@ configure_workspace() {
     echo "  $AMBER_HOME/bin/amber workspace configure $workspace" >&2
     exit 1
   }
-  "$AMBER_HOME/bin/amber" workspace configure "$workspace" <&3
+  run_amber workspace configure "$workspace" <&3
   WORKSPACE_CONFIGURED=1
 }
 
@@ -1090,7 +1182,7 @@ maybe_install_service() {
     return 0
   fi
 
-  "$AMBER_HOME/bin/amber" service install --workspace "$workspace" --enable --now
+  run_amber service install --workspace "$workspace" --enable --now
   SERVICE_INSTALLED=1
   if command -v loginctl >/dev/null 2>&1; then
     info "Enabling linger lets this user service start after reboot without an interactive login."
@@ -1150,6 +1242,7 @@ main() {
   section "Check host"
   preflight_installer
   section "Install Amber"
+  configure_release_asset_choice
   install_release
   if [[ -z "$WORKSPACE_NAME" ]]; then
     WORKSPACE_NAME="$(prompt "Workspace name")"

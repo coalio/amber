@@ -108,6 +108,144 @@ def test_installer_downloads_split_release_without_full_asset(tmp_path: Path) ->
         "workspace init indiedreamers",
         "workspace configure indiedreamers",
     ]
+    assert "codex.progress" not in result.stderr
+
+
+def test_installer_suppresses_amber_json_logs_when_not_verbose(tmp_path: Path) -> None:
+    archive = _make_release_archive(tmp_path)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _add_fake_installer_prereqs(fake_bin)
+    tty = tmp_path / "tty"
+    tty.write_text("", encoding="utf-8")
+    fake_log = tmp_path / "amber.log"
+    amber_home = tmp_path / ".amber"
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "AMBER_FAKE_JSON_LOG": "1",
+            "AMBER_FAKE_LOG": str(fake_log),
+            "AMBER_HOME": str(amber_home),
+            "AMBER_RELEASE_ARCHIVE": str(archive),
+            "AMBER_RELEASE_TAG": "local",
+            "AMBER_TTY": str(tty),
+            "PATH": f"{fake_bin}:{env['PATH']}",
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", "installer/install.sh", "indiedreamers"],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "codex.progress" not in result.stdout
+    assert "codex.progress" not in result.stderr
+
+
+def test_installer_can_install_full_modernbert_release(tmp_path: Path) -> None:
+    archive = _make_release_archive(tmp_path)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _add_fake_installer_prereqs(fake_bin)
+    curl_log = tmp_path / "curl.log"
+    _write_executable(
+        fake_bin / "curl",
+        """
+        #!/usr/bin/env bash
+        set -euo pipefail
+        out=""
+        url=""
+        while [[ $# -gt 0 ]]; do
+          case "$1" in
+            -o)
+              out="$2"
+              shift 2
+              ;;
+            *)
+              url="$1"
+              shift
+              ;;
+          esac
+        done
+
+        printf '%s\\n' "$url" >> "$FAKE_CURL_LOG"
+        case "$url" in
+          *api.github.com*/releases/latest)
+            cat <<'JSON'
+        {
+          "tag_name": "v0.5.0",
+          "assets": [
+            {"browser_download_url": "https://downloads.example/amber-linux-x86_64.tar.gz"},
+            {"browser_download_url": "https://downloads.example/amber-linux-x86_64-full.tar.gz"}
+          ]
+        }
+        JSON
+            ;;
+          *amber-linux-x86_64-full.tar.gz)
+            cp "$FAKE_ARCHIVE" "$out"
+            ;;
+          *amber-linux-x86_64.tar.gz)
+            echo "standard package should not have been downloaded" >&2
+            exit 3
+            ;;
+          *)
+            echo "unexpected curl url: $url" >&2
+            exit 2
+            ;;
+        esac
+        """,
+    )
+    tty = tmp_path / "tty"
+    tty.write_text("\ny\n\n\n", encoding="utf-8")
+    fake_log = tmp_path / "amber.log"
+    amber_home = tmp_path / ".amber"
+    tmp_root = tmp_path / "tmp-empty"
+    tmp_root.mkdir()
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "AMBER_FAKE_LOG": str(fake_log),
+            "AMBER_HOME": str(amber_home),
+            "AMBER_TTY": str(tty),
+            "FAKE_ARCHIVE": str(archive),
+            "FAKE_CURL_LOG": str(curl_log),
+            "PATH": f"{fake_bin}:{env['PATH']}",
+            "TMPDIR": str(tmp_root),
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", "installer/install.sh", "indiedreamers"],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Using full Amber package with local ModernBERT scorer: amber-linux-x86_64-full.tar.gz" in result.stdout
+    assert "Enabling local ModernBERT attention scorer for this workspace..." in result.stdout
+    assert (amber_home / "packages" / "v0.5.0" / "amber-linux-x86_64-full.tar.gz").exists()
+    assert curl_log.read_text(encoding="utf-8").splitlines() == [
+        "https://api.github.com/repos/coalio/amber/releases/latest",
+        "https://downloads.example/amber-linux-x86_64-full.tar.gz",
+    ]
+    config = (amber_home / "workspaces" / "indiedreamers" / "config.toml").read_text(encoding="utf-8")
+    assert 'scorer = "modernbert"' in config
 
 
 def test_installer_reuses_cached_release_archive(tmp_path: Path) -> None:
@@ -263,7 +401,7 @@ def test_installer_downloads_fresh_when_user_declines_cached_archive(tmp_path: P
         """,
     )
     tty = tmp_path / "tty"
-    tty.write_text("\nn\n\n\n", encoding="utf-8")
+    tty.write_text("\nn\nn\n\n", encoding="utf-8")
     fake_log = tmp_path / "amber.log"
     amber_home = tmp_path / ".amber"
     tmp_root = tmp_path / "tmp-empty"
@@ -691,7 +829,8 @@ def test_installer_help_mentions_verbose_flag_without_running_preflight() -> Non
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "-v, --verbose" in result.stdout
-    assert "Show full Podman probe diagnostics." in result.stdout
+    assert "--full, --ml" in result.stdout
+    assert "Show full Podman probe diagnostics and Amber setup logs." in result.stdout
     assert "Checking host prerequisites" not in result.stdout
 
 
@@ -776,6 +915,9 @@ def _make_release_archive(tmp_path: Path) -> Path:
             if [[ "${1:-}" == "workspace" && "${2:-}" == "configure" && -n "${AMBER_FAKE_ENV_LOG:-}" ]]; then
               printf 'AMBER_CODEX_CGROUP_MANAGER=%s\\n' "${AMBER_CODEX_CGROUP_MANAGER:-}" >> "$AMBER_FAKE_ENV_LOG"
               printf 'AMBER_CODEX_ENFORCE_RESOURCE_LIMITS=%s\\n' "${AMBER_CODEX_ENFORCE_RESOURCE_LIMITS:-}" >> "$AMBER_FAKE_ENV_LOG"
+            fi
+            if [[ "${1:-}" == "workspace" && "${2:-}" == "configure" && -n "${AMBER_FAKE_JSON_LOG:-}" && "${AMBER_LOG_TO_STDERR:-1}" != "0" ]]; then
+              printf '{"timestamp":"fixture","level":"INFO","logger":"amber.adapters.codex","message":"codex.progress","event":"codex.progress","context":{"message":"installing"}}\\n' >&2
             fi
             """
         ),

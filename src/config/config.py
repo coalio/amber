@@ -52,6 +52,7 @@ class Settings(BaseModel):
     context_initial_engagement_delay_max_seconds: float
     context_conversation_window_before: int
     context_conversation_window_after: int
+    attention_scorer: str
     attention_surface_threshold: float
     attention_urgent_threshold: float
     attention_memory_limit: int
@@ -137,6 +138,7 @@ ENV_OVERRIDES: dict[str, tuple[str, ...]] = {
     ),
     "AMBER_CONTEXT_CONVERSATION_WINDOW_BEFORE": ("context", "conversation_window_before"),
     "AMBER_CONTEXT_CONVERSATION_WINDOW_AFTER": ("context", "conversation_window_after"),
+    "AMBER_ATTENTION_SCORER": ("attention", "scorer"),
     "AMBER_ATTENTION_SURFACE_THRESHOLD": ("attention", "surface_threshold"),
     "AMBER_ATTENTION_URGENT_THRESHOLD": ("attention", "urgent_threshold"),
     "AMBER_ATTENTION_MEMORY_LIMIT": ("attention", "memory_limit"),
@@ -288,6 +290,7 @@ def _get_settings_cached(workspace_key: str | None, config_key: str | None) -> S
         ),
         context_conversation_window_before=int(_value(data, ("context", "conversation_window_before"))),
         context_conversation_window_after=int(_value(data, ("context", "conversation_window_after"))),
+        attention_scorer=str(_value(data, ("attention", "scorer"))),
         attention_surface_threshold=float(_value(data, ("attention", "surface_threshold"))),
         attention_urgent_threshold=float(_value(data, ("attention", "urgent_threshold"))),
         attention_memory_limit=int(_value(data, ("attention", "memory_limit"))),

@@ -459,8 +459,10 @@ probe_codex_cgroup_mode() {
   return 1
 }
 
-apply_codex_no_limits_fallback_if_confirmed() {
+apply_codex_no_limits_fallback() {
   local image="$1"
+  local require_confirmation="$2"
+  local failure_message="$3"
 
   if ! podman_error_looks_like_cgroup_mode "$PODMAN_PROBE_ERROR"; then
     warn "Codex Podman probe failed, but it did not look like a cgroup-mode error."
@@ -468,9 +470,13 @@ apply_codex_no_limits_fallback_if_confirmed() {
     return 1
   fi
 
-  warn "Codex Podman probe failed with the requested cgroup/resource-limit mode."
+  warn "$failure_message"
   [[ -n "$PODMAN_PROBE_ERROR" ]] && warn "$PODMAN_PROBE_ERROR"
-  ask_yes_no "Try Amber's workspace-only fallback with cgroupfs and no Codex resource limits?" "yes" || return 1
+  if [[ "$require_confirmation" == "true" ]]; then
+    ask_yes_no "Try Amber's workspace-only fallback with cgroupfs and no Codex resource limits?" "yes" || return 1
+  else
+    info "Trying Amber's workspace-only fallback with cgroupfs and Codex resource limits disabled..."
+  fi
 
   if probe_codex_cgroup_mode "$image" "cgroupfs" "false"; then
     CODEX_CGROUP_MANAGER_OVERRIDE="cgroupfs"
@@ -484,6 +490,22 @@ apply_codex_no_limits_fallback_if_confirmed() {
   return 1
 }
 
+apply_codex_no_limits_fallback_if_confirmed() {
+  local image="$1"
+  apply_codex_no_limits_fallback \
+    "$image" \
+    "true" \
+    "Codex Podman probe failed with the requested cgroup/resource-limit mode."
+}
+
+apply_codex_no_limits_fallback_after_disabled_choice() {
+  local image="$1"
+  apply_codex_no_limits_fallback \
+    "$image" \
+    "false" \
+    "Codex Podman probe still failed with resource limits disabled because Podman rejected its default cgroup mode."
+}
+
 configure_codex_cgroup_choice() {
   local podman_info="$1"
   local image
@@ -494,8 +516,9 @@ configure_codex_cgroup_choice() {
   if ! ask_yes_no "Use cgroup-backed resource limits for the Codex sandbox?" "yes"; then
     CODEX_ENFORCE_RESOURCE_LIMITS_OVERRIDE="false"
     info "Codex resource limits will be disabled for this workspace."
+    info "Probing Podman without Codex resource-limit flags..."
     if image="$(podman_probe_image)" && ! probe_codex_cgroup_mode "$image" "" "false"; then
-      apply_codex_no_limits_fallback_if_confirmed "$image" || true
+      apply_codex_no_limits_fallback_after_disabled_choice "$image" || true
     fi
     return 0
   fi

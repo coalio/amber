@@ -206,7 +206,7 @@ def test_installer_can_install_full_modernbert_release(tmp_path: Path) -> None:
         """,
     )
     tty = tmp_path / "tty"
-    tty.write_text("\ny\n\n\n", encoding="utf-8")
+    tty.write_text("\n2\n\n\n", encoding="utf-8")
     fake_log = tmp_path / "amber.log"
     amber_home = tmp_path / ".amber"
     tmp_root = tmp_path / "tmp-empty"
@@ -401,7 +401,7 @@ def test_installer_downloads_fresh_when_user_declines_cached_archive(tmp_path: P
         """,
     )
     tty = tmp_path / "tty"
-    tty.write_text("\nn\nn\n\n", encoding="utf-8")
+    tty.write_text("\n1\nn\n\n", encoding="utf-8")
     fake_log = tmp_path / "amber.log"
     amber_home = tmp_path / ".amber"
     tmp_root = tmp_path / "tmp-empty"
@@ -829,7 +829,8 @@ def test_installer_help_mentions_verbose_flag_without_running_preflight() -> Non
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "-v, --verbose" in result.stdout
-    assert "--full, --ml" in result.stdout
+    assert "--full" not in result.stdout
+    assert "--standard" not in result.stdout
     assert "Show full Podman probe diagnostics and Amber setup logs." in result.stdout
     assert "Checking host prerequisites" not in result.stdout
 

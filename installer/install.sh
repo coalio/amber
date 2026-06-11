@@ -74,11 +74,9 @@ installer_verbose() {
 
 usage() {
   cat <<'USAGE'
-Usage: install.sh [workspace-name] [--standard|--full] [-v|--verbose]
+Usage: install.sh [workspace-name] [-v|--verbose]
 
 Options:
-  --standard     Install the standard Amber package without local ML dependencies.
-  --full, --ml   Install the full Amber package with the local ModernBERT scorer.
   -v, --verbose  Show full Podman probe diagnostics and Amber setup logs.
 
 Examples:
@@ -92,12 +90,6 @@ parse_args() {
     case "$arg" in
       -v|--verbose)
         VERBOSE=1
-        ;;
-      --standard)
-        INSTALL_VARIANT="standard"
-        ;;
-      --full|--ml)
-        INSTALL_VARIANT="full"
         ;;
       -h|--help)
         usage
@@ -213,10 +205,94 @@ answer_is_yes() {
   esac
 }
 
+choice_menu_enabled() {
+  open_tty_input || return 1
+  [[ -t 3 && -t 2 && "${TERM:-}" != "dumb" ]]
+}
+
+draw_choice_menu() {
+  local label="$1"
+  local selected="$2"
+  shift 2
+  local options=("$@")
+  local index=0
+
+  printf '\033[2K%b%s%b\n' "$COLOR_BOLD" "$label" "$COLOR_RESET" >&2
+  printf '\033[2K%bUse Up/Down and Enter.%b\n' "$COLOR_DIM" "$COLOR_RESET" >&2
+  for option in "${options[@]}"; do
+    if (( index == selected )); then
+      printf '\033[2K  > %s\n' "$option" >&2
+    else
+      printf '\033[2K    %s\n' "$option" >&2
+    fi
+    index=$((index + 1))
+  done
+}
+
+prompt_choice_index() {
+  local label="$1"
+  local selected="$2"
+  shift 2
+  local options=("$@")
+  local key rest line_count option_count
+  option_count="${#options[@]}"
+  line_count=$((option_count + 2))
+
+  draw_choice_menu "$label" "$selected" "${options[@]}"
+  while IFS= read -rsn1 key <&3; do
+    case "$key" in
+      "")
+        printf '\n' >&2
+        printf '%s\n' "$selected"
+        return 0
+        ;;
+      $'\x1b')
+        rest=""
+        read -rsn2 -t 0.1 rest <&3 || true
+        case "$rest" in
+          "[A")
+            selected=$(((selected + option_count - 1) % option_count))
+            ;;
+          "[B")
+            selected=$(((selected + 1) % option_count))
+            ;;
+        esac
+        ;;
+      k|K)
+        selected=$(((selected + option_count - 1) % option_count))
+        ;;
+      j|J)
+        selected=$(((selected + 1) % option_count))
+        ;;
+      [1-9])
+        if (( key >= 1 && key <= option_count )); then
+          selected=$((key - 1))
+        fi
+        ;;
+    esac
+    printf '\033[%dA' "$line_count" >&2
+    draw_choice_menu "$label" "$selected" "${options[@]}"
+  done
+
+  printf '\n' >&2
+  printf '%s\n' "$selected"
+}
+
 ask_yes_no() {
   local label="$1"
   local default="$2"
-  local prompt answer
+  local prompt answer default_index selected
+  if choice_menu_enabled; then
+    if [[ "$default" == "yes" ]]; then
+      default_index=0
+    else
+      default_index=1
+    fi
+    selected="$(prompt_choice_index "$label" "$default_index" "Yes" "No")"
+    [[ "$selected" == "0" ]]
+    return
+  fi
+
   case "$default" in
     yes)
       prompt="$label [Y/n]"
@@ -271,12 +347,8 @@ configure_release_asset_choice() {
     fi
   elif [[ -n "$ASSET_NAME_OVERRIDE" || -n "$RELEASE_ARCHIVE" || -n "$RELEASE_URL" ]]; then
     INSTALL_VARIANT="custom"
-  elif installer_is_interactive && ask_yes_no "Install full Amber package with local ModernBERT scorer (~2 GB)?" "no"; then
-    INSTALL_VARIANT="full"
-    ASSET_NAME="$FULL_ASSET_NAME"
   else
-    INSTALL_VARIANT="standard"
-    ASSET_NAME="$DEFAULT_ASSET_NAME"
+    choose_release_asset_variant
   fi
 
   case "$INSTALL_VARIANT" in
@@ -288,6 +360,54 @@ configure_release_asset_choice() {
       ;;
     custom)
       info "Using custom Amber package source: $ASSET_NAME"
+      ;;
+  esac
+}
+
+choose_release_asset_variant() {
+  local selected answer prompt
+  if choice_menu_enabled; then
+    selected="$(
+      prompt_choice_index \
+        "Which Amber version should be installed?" \
+        0 \
+        "Standard - smaller install, heuristic attention scoring" \
+        "Full - includes local ModernBERT scorer, about 2 GB"
+    )"
+    if [[ "$selected" == "1" ]]; then
+      INSTALL_VARIANT="full"
+      ASSET_NAME="$FULL_ASSET_NAME"
+    else
+      INSTALL_VARIANT="standard"
+      ASSET_NAME="$DEFAULT_ASSET_NAME"
+    fi
+    return
+  fi
+
+  if ! installer_is_interactive; then
+    INSTALL_VARIANT="standard"
+    ASSET_NAME="$DEFAULT_ASSET_NAME"
+    return
+  fi
+
+  printf '  1) Standard - smaller install, heuristic attention scoring\n' >&2
+  printf '  2) Full - includes local ModernBERT scorer, about 2 GB\n' >&2
+  prompt="Which Amber version should be installed? [1/2]"
+  if ! read_tty_answer "$prompt"; then
+    INSTALL_VARIANT="standard"
+    ASSET_NAME="$DEFAULT_ASSET_NAME"
+    return
+  fi
+
+  answer="${TTY_ANSWER,,}"
+  case "$answer" in
+    2|full|ml|modernbert|bert)
+      INSTALL_VARIANT="full"
+      ASSET_NAME="$FULL_ASSET_NAME"
+      ;;
+    *)
+      INSTALL_VARIANT="standard"
+      ASSET_NAME="$DEFAULT_ASSET_NAME"
       ;;
   esac
 }

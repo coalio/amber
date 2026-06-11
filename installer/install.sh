@@ -218,7 +218,6 @@ draw_choice_menu() {
   local index=0
 
   printf '\033[2K%b%s%b\n' "$COLOR_BOLD" "$label" "$COLOR_RESET" >&2
-  printf '\033[2K%bUse Up/Down and Enter.%b\n' "$COLOR_DIM" "$COLOR_RESET" >&2
   for option in "${options[@]}"; do
     if (( index == selected )); then
       printf '\033[2K  > %s\n' "$option" >&2

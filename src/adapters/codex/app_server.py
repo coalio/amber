@@ -426,7 +426,7 @@ class CodexTaskRunner:
                     "clientInfo": {
                         "name": "amber",
                         "title": "Amber",
-                        "version": "0.1.0",
+                        "version": "0.2.0",
                     },
                     "capabilities": {"experimentalApi": True},
                 },

@@ -79,16 +79,10 @@ The installer defaults to the latest `coalio/amber` GitHub release. Maintainers 
 
 - `AMBER_REPO` changes the GitHub repository.
 - `AMBER_HOME` changes the install root.
-- `AMBER_WORKSPACE` provides a workspace name when no positional argument is passed.
 - `AMBER_RELEASE_ARCHIVE` installs from a local archive.
 - `AMBER_RELEASE_URL` installs from a specific archive URL.
 - `AMBER_RELEASE_TAG` controls the release directory name for manual installs.
 - `AMBER_ASSET_NAME` changes the expected release asset name.
-- `AMBER_TMP_PACKAGE` recovers a specific previously downloaded package path.
-- `AMBER_RECOVER_TMP_PACKAGE=1` auto-recovers the largest readable `$AMBER_ASSET_NAME` under `${TMPDIR:-/tmp}` before downloading.
-- `AMBER_INSTALL_NO_CACHE=1` or `AMBER_NO_CACHE=1` ignores cached and recovered packages for this run, downloads the release asset again, then refreshes the persistent package cache.
-- `AMBER_INSTALL_FIX_SYSTEM` controls interactive system package fixes for missing prerequisites (`ask`, `yes`, or `no`). Non-interactive installs still print the command and exit instead of mutating the host.
-- `AMBER_INSTALL_SERVICE` pre-answers the user-service prompt.
 
 Example local archive install:
 

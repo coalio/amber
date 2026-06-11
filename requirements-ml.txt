@@ -1,6 +1,4 @@
 # Optional local ModernBERT attention scorer dependencies.
 # Not installed by default because Torch/Transformers pull multi-GB runtime libraries.
-numpy==2.4.4
-safetensors==0.7.0
 torch==2.12.0
 transformers==5.9.0

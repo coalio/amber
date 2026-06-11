@@ -8,7 +8,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from src.cli_input import read_masked_secret
+from src.cli_input import choice_menu_supported, read_choice, read_masked_secret
+
+
+CODEX_AUTH_METHODS = ("api-key", "device", "access-token")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -289,6 +292,16 @@ def _prompt_secret(prompt: str) -> str:
     return read_masked_secret(prompt)
 
 
+def _prompt_choice(label: str, choices: tuple[str, ...], default: str) -> str:
+    if default not in choices:
+        raise ValueError("default must be one of choices.")
+    if choice_menu_supported():
+        return choices[read_choice(label, choices, choices.index(default))]
+
+    raw = input(f"{label} [{'/'.join(choices)}] ({default}): ").strip().lower()
+    return raw or default
+
+
 def _existing_text(value: Any) -> str:
     if value is None:
         return ""
@@ -365,7 +378,7 @@ def _configure_codex_cli(settings: Any, *, adapter: Any | None = None) -> None:
         progress_callback=lambda message: print(f"[codex-cli-auth] {message}", flush=True),
     )
     adapter.ensure_app_server()
-    method = input("Codex CLI auth method [api-key/device/access-token] (api-key): ").strip().lower() or "api-key"
+    method = _prompt_choice("Codex CLI auth method", CODEX_AUTH_METHODS, "api-key")
     if method == "device":
         require_sandbox_success(adapter, ["codex", "login", "--device-auth"], interactive=True, label="codex device login")
     elif method == "access-token":

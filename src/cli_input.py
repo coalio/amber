@@ -5,7 +5,8 @@ import select
 import sys
 import termios
 import tty
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 
 
 def read_masked_secret(prompt: str) -> str:
@@ -25,24 +26,91 @@ def read_choice(prompt: str, choices: Sequence[str], default_index: int = 0) -> 
     if default_index < 0 or default_index >= len(choices):
         raise ValueError("default_index is outside choices.")
 
-    fd = sys.stdin.fileno()
+    with _choice_terminal() as terminal:
+        return _read_choice_from_terminal(prompt, choices, default_index, terminal)
+
+
+def choice_menu_supported() -> bool:
+    # require a terminal target that can safely receive cursor-control redraws
+    if os.getenv("TERM") == "dumb":
+        return False
+    if sys.stdin.isatty() and sys.stderr.isatty():
+        return True
+    return _external_tty_available()
+
+
+ChoiceTerminal = tuple[int, Callable[[], str], Callable[[str], None], object]
+
+
+@contextmanager
+def _choice_terminal() -> Iterator[ChoiceTerminal]:
+    # use stdio first so direct CLI runs keep normal stream behavior
+    if sys.stdin.isatty() and sys.stderr.isatty():
+        yield (
+            sys.stdin.fileno(),
+            lambda: sys.stdin.read(1),
+            lambda text: _write_stream(sys.stderr, text),
+            sys.stdin,
+        )
+        return
+
+    # fall back to the controlling terminal for installer-nested configure flows
+    encoding = getattr(sys.stdin, "encoding", None) or "utf-8"
+    fd = os.open(_tty_path(), os.O_RDWR | os.O_NOCTTY)
+    try:
+        yield (
+            fd,
+            lambda: os.read(fd, 1).decode(encoding, errors="ignore"),
+            lambda text: os.write(fd, text.encode(encoding, errors="replace")),
+            fd,
+        )
+    finally:
+        os.close(fd)
+
+
+def _read_choice_from_terminal(
+    prompt: str,
+    choices: Sequence[str],
+    default_index: int,
+    terminal: ChoiceTerminal,
+) -> int:
+    fd, read_char, write_text, select_target = terminal
     old_settings = termios.tcgetattr(fd)
     try:
+        # scope cbreak mode to the active menu so later secret prompts behave normally
         tty.setcbreak(fd)
         return _read_choice_index(
-            lambda: sys.stdin.read(1),
-            lambda text: print(text, end="", file=sys.stderr, flush=True),
+            read_char,
+            write_text,
             prompt,
             choices,
             default_index,
-            lambda timeout: bool(select.select([sys.stdin], [], [], timeout)[0]),
+            lambda timeout: bool(select.select([select_target], [], [], timeout)[0]),
         )
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 
-def choice_menu_supported() -> bool:
-    return sys.stdin.isatty() and sys.stderr.isatty() and os.getenv("TERM") != "dumb"
+def _write_stream(stream: object, text: str) -> None:
+    write = getattr(stream, "write")
+    flush = getattr(stream, "flush")
+    write(text)
+    flush()
+
+
+def _tty_path() -> str:
+    return os.getenv("AMBER_TTY") or "/dev/tty"
+
+
+def _external_tty_available() -> bool:
+    try:
+        fd = os.open(_tty_path(), os.O_RDWR | os.O_NOCTTY)
+    except OSError:
+        return False
+    try:
+        return os.isatty(fd)
+    finally:
+        os.close(fd)
 
 
 def _read_masked_chars(read_char: Callable[[], str], write: Callable[[str], None]) -> str:

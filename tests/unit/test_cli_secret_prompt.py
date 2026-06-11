@@ -1,6 +1,15 @@
 from __future__ import annotations
 
+import os
+import pty
+import threading
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
+
 from src import cli
+from src.cli_input import choice_menu_supported
+from src.cli_input import read_choice
 from src.cli_input import _read_masked_chars
 from src.cli_input import _read_choice_index
 
@@ -77,3 +86,53 @@ def test_codex_auth_method_uses_choice_menu_when_supported(monkeypatch) -> None:
         "choices": cli.CODEX_AUTH_METHODS,
         "default_index": 0,
     }
+
+
+def test_choice_menu_supported_uses_controlling_tty_when_stdio_is_not_tty(monkeypatch) -> None:
+    with _temporary_pty() as (_master_fd, slave_name):
+        monkeypatch.setenv("AMBER_TTY", slave_name)
+        monkeypatch.setenv("TERM", "xterm-256color")
+        monkeypatch.setattr("sys.stdin", _FakeStream(is_tty=False))
+        monkeypatch.setattr("sys.stderr", _FakeStream(is_tty=False))
+
+        assert choice_menu_supported()
+
+
+def test_read_choice_uses_controlling_tty_when_stdio_is_not_tty(monkeypatch) -> None:
+    with _temporary_pty() as (master_fd, slave_name):
+        monkeypatch.setenv("AMBER_TTY", slave_name)
+        monkeypatch.setattr("sys.stdin", _FakeStream(is_tty=False))
+        monkeypatch.setattr("sys.stderr", _FakeStream(is_tty=False))
+        feeder = threading.Thread(target=_delayed_write, args=(master_fd, b"\x1b[B\n"), daemon=True)
+
+        feeder.start()
+        selected = read_choice("Codex CLI auth method", ("api-key", "device", "access-token"), 0)
+        feeder.join(timeout=1)
+
+        assert selected == 1
+
+
+class _FakeStream:
+    def __init__(self, *, is_tty: bool) -> None:
+        self._is_tty = is_tty
+
+    def isatty(self) -> bool:
+        return self._is_tty
+
+
+@contextmanager
+def _temporary_pty() -> Iterator[tuple[int, str]]:
+    master_fd, slave_fd = pty.openpty()
+    try:
+        yield master_fd, os.ttyname(slave_fd)
+    finally:
+        for fd in (master_fd, slave_fd):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
+def _delayed_write(fd: int, payload: bytes) -> None:
+    time.sleep(0.05)
+    os.write(fd, payload)

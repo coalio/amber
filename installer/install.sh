@@ -19,6 +19,7 @@ WORKSPACE_CONFIGURED=0
 SERVICE_INSTALLED=0
 PATH_RC_FILE=""
 PATH_CONFIGURED=0
+HEADLESS=0
 VERBOSE=0
 TTY="${AMBER_TTY:-/dev/tty}"
 TTY_FD_OPEN=0
@@ -74,11 +75,16 @@ installer_verbose() {
   (( VERBOSE ))
 }
 
+installer_headless() {
+  (( HEADLESS ))
+}
+
 usage() {
   cat <<'USAGE'
-Usage: install.sh [workspace-name] [-v|--verbose]
+Usage: install.sh [workspace-name] [-v|--verbose] [--headless]
 
 Options:
+  --headless     Use defaults and skip interactive workspace/service setup.
   -v, --verbose  Show full Podman probe diagnostics and Amber setup logs.
 
 Examples:
@@ -90,6 +96,9 @@ parse_args() {
   local arg
   for arg in "$@"; do
     case "$arg" in
+      --headless)
+        HEADLESS=1
+        ;;
       -v|--verbose)
         VERBOSE=1
         ;;
@@ -177,7 +186,7 @@ need_command() {
 }
 
 installer_is_interactive() {
-  [[ -r "$TTY" ]]
+  ! installer_headless && [[ -r "$TTY" ]]
 }
 
 open_tty_input() {
@@ -208,6 +217,7 @@ answer_is_yes() {
 }
 
 choice_menu_enabled() {
+  installer_headless && return 1
   open_tty_input || return 1
   [[ -t 3 && -t 2 && "${TERM:-}" != "dumb" ]]
 }
@@ -433,7 +443,11 @@ amber_log_to_stderr() {
 }
 
 run_amber() {
-  AMBER_LOG_TO_STDERR="$(amber_log_to_stderr)" "$AMBER_HOME/bin/amber" "$@"
+  if installer_headless; then
+    AMBER_HEADLESS=1 AMBER_LOG_TO_STDERR="$(amber_log_to_stderr)" "$AMBER_HOME/bin/amber" "$@"
+  else
+    AMBER_LOG_TO_STDERR="$(amber_log_to_stderr)" "$AMBER_HOME/bin/amber" "$@"
+  fi
 }
 
 amber_bin_dir() {
@@ -1027,6 +1041,10 @@ preflight_installer() {
 prompt() {
   local label="$1"
   local value=""
+  if installer_headless; then
+    error "Headless install requires a workspace name as the first installer argument."
+    exit 1
+  fi
   if ! installer_is_interactive; then
     error "Interactive setup requires a terminal. Pass a workspace name as the first installer argument."
     exit 1
@@ -1395,6 +1413,14 @@ configure_workspace() {
   run_amber workspace init "$workspace"
   apply_codex_workspace_overrides "$workspace"
   apply_full_release_workspace_overrides "$workspace"
+
+  # honor explicit headless mode without probing or consuming terminal input
+  if installer_headless; then
+    info "Headless install skipped interactive workspace configuration. Run manually with:"
+    print_amber_command workspace configure "$workspace"
+    WORKSPACE_CONFIGURED=0
+    return 0
+  fi
 
   # leave a direct follow-up command when setup cannot continue interactively
   if ! installer_is_interactive; then

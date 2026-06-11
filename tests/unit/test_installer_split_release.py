@@ -205,6 +205,103 @@ def test_installer_adds_amber_bin_to_detected_shell_rc_and_prints_amber_command(
     ]
 
 
+def test_installer_headless_uses_defaults_and_skips_interactive_setup(tmp_path: Path) -> None:
+    archive = _make_release_archive(tmp_path)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _add_fake_installer_prereqs(fake_bin)
+    curl_log = tmp_path / "curl.log"
+    _write_executable(
+        fake_bin / "curl",
+        """
+        #!/usr/bin/env bash
+        set -euo pipefail
+        out=""
+        url=""
+        while [[ $# -gt 0 ]]; do
+          case "$1" in
+            -o)
+              out="$2"
+              shift 2
+              ;;
+            *)
+              url="$1"
+              shift
+              ;;
+          esac
+        done
+
+        printf '%s\\n' "$url" >> "$FAKE_CURL_LOG"
+        case "$url" in
+          *api.github.com*/releases/latest)
+            cat <<'JSON'
+        {
+          "tag_name": "v0.6.0",
+          "assets": [
+            {"browser_download_url": "https://downloads.example/amber-linux-x86_64.tar.gz"},
+            {"browser_download_url": "https://downloads.example/amber-linux-x86_64-full.tar.gz"}
+          ]
+        }
+        JSON
+            ;;
+          *amber-linux-x86_64.tar.gz)
+            cp "$FAKE_ARCHIVE" "$out"
+            ;;
+          *amber-linux-x86_64-full.tar.gz)
+            echo "full package should not have been downloaded in headless default mode" >&2
+            exit 3
+            ;;
+          *)
+            echo "unexpected curl url: $url" >&2
+            exit 2
+            ;;
+        esac
+        """,
+    )
+    tty = tmp_path / "tty"
+    tty.write_text("2\ny\ny\n", encoding="utf-8")
+    fake_log = tmp_path / "amber.log"
+    amber_home = tmp_path / ".amber"
+    tmp_root = tmp_path / "tmp-empty"
+    tmp_root.mkdir()
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "AMBER_FAKE_LOG": str(fake_log),
+            "AMBER_HOME": str(amber_home),
+            "AMBER_TTY": str(tty),
+            "FAKE_ARCHIVE": str(archive),
+            "FAKE_CURL_LOG": str(curl_log),
+            "PATH": f"{fake_bin}:{env['PATH']}",
+            "TMPDIR": str(tmp_root),
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", "installer/install.sh", "--headless", "indiedreamers"],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Using standard Amber package: amber-linux-x86_64.tar.gz" in result.stdout
+    assert "Headless install skipped interactive workspace configuration." in result.stdout
+    assert fake_log.read_text(encoding="utf-8").splitlines() == [
+        "workspace init indiedreamers",
+    ]
+    assert curl_log.read_text(encoding="utf-8").splitlines() == [
+        "https://api.github.com/repos/coalio/amber/releases/latest",
+        "https://downloads.example/amber-linux-x86_64.tar.gz",
+    ]
+
+
 def test_installer_can_install_full_modernbert_release(tmp_path: Path) -> None:
     archive = _make_release_archive(tmp_path)
 
@@ -883,6 +980,7 @@ def test_installer_help_mentions_verbose_flag_without_running_preflight() -> Non
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "-v, --verbose" in result.stdout
+    assert "--headless" in result.stdout
     assert "--full" not in result.stdout
     assert "--standard" not in result.stdout
     assert "Show full Podman probe diagnostics and Amber setup logs." in result.stdout

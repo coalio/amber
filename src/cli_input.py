@@ -32,11 +32,22 @@ def read_choice(prompt: str, choices: Sequence[str], default_index: int = 0) -> 
 
 def choice_menu_supported() -> bool:
     # require a terminal target that can safely receive cursor-control redraws
+    if headless_enabled():
+        return False
     if os.getenv("TERM") == "dumb":
         return False
     if sys.stdin.isatty() and sys.stderr.isatty():
         return True
     return _external_tty_available()
+
+
+def headless_enabled() -> bool:
+    return _truthy_env("AMBER_HEADLESS")
+
+
+def _truthy_env(name: str) -> bool:
+    value = os.getenv(name, "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
 
 
 ChoiceTerminal = tuple[int, Callable[[], str], Callable[[str], None], object]

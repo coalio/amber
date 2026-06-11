@@ -7,8 +7,11 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 
+import pytest
+
 from src import cli
 from src.cli_input import choice_menu_supported
+from src.cli_input import headless_enabled
 from src.cli_input import read_choice
 from src.cli_input import _read_masked_chars
 from src.cli_input import _read_choice_index
@@ -110,6 +113,38 @@ def test_read_choice_uses_controlling_tty_when_stdio_is_not_tty(monkeypatch) -> 
         feeder.join(timeout=1)
 
         assert selected == 1
+
+
+def test_headless_disables_choice_menu_even_when_stdio_is_tty(monkeypatch) -> None:
+    monkeypatch.setenv("AMBER_HEADLESS", "1")
+    monkeypatch.setattr("sys.stdin", _FakeStream(is_tty=True))
+    monkeypatch.setattr("sys.stderr", _FakeStream(is_tty=True))
+
+    assert headless_enabled()
+    assert not choice_menu_supported()
+
+
+def test_headless_prompt_choice_returns_default_without_input(monkeypatch) -> None:
+    monkeypatch.setenv("AMBER_HEADLESS", "1")
+    monkeypatch.setattr("builtins.input", lambda _prompt: (_ for _ in ()).throw(AssertionError("should not prompt")))
+
+    method = cli._prompt_choice("Codex CLI auth method", cli.CODEX_AUTH_METHODS, "api-key")
+
+    assert method == "api-key"
+
+
+def test_headless_required_prompt_uses_existing_value_without_input(monkeypatch) -> None:
+    monkeypatch.setenv("AMBER_HEADLESS", "1")
+    monkeypatch.setattr("builtins.input", lambda _prompt: (_ for _ in ()).throw(AssertionError("should not prompt")))
+
+    assert cli._prompt_required("AI model", "AMBER_AI_MODEL", "gpt-test") == "gpt-test"
+
+
+def test_headless_required_prompt_fails_without_value(monkeypatch) -> None:
+    monkeypatch.setenv("AMBER_HEADLESS", "1")
+
+    with pytest.raises(RuntimeError, match="AI model is required in headless mode"):
+        cli._prompt_required("AI model", "AMBER_AI_MODEL", None)
 
 
 class _FakeStream:

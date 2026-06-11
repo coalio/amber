@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from src.cli_input import choice_menu_supported, read_choice, read_masked_secret
+from src.cli_input import choice_menu_supported, headless_enabled, read_choice, read_masked_secret
 
 
 CODEX_AUTH_METHODS = ("api-key", "device", "access-token")
@@ -54,6 +54,7 @@ def _build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--overwrite", action="store_true", help="Overwrite seeded config, prompts, and skills.")
     configure_parser = workspace_subparsers.add_parser("configure", help="Configure and validate required auth.")
     configure_parser.add_argument("workspace")
+    configure_parser.add_argument("--headless", action="store_true", help="Use environment/config values without prompting.")
     doctor_parser = workspace_subparsers.add_parser("doctor", help="Check a workspace.")
     doctor_parser.add_argument("workspace")
     doctor_parser.add_argument("--external", action="store_true", help="Run external auth checks where possible.")
@@ -91,6 +92,16 @@ def _workspace(args: argparse.Namespace) -> int:
         print(f"workspace created: {path}")
         return 0
     if args.workspace_command == "configure":
+        if getattr(args, "headless", False):
+            previous_headless = os.environ.get("AMBER_HEADLESS")
+            os.environ["AMBER_HEADLESS"] = "1"
+            try:
+                return _configure_workspace(args.workspace)
+            finally:
+                if previous_headless is None:
+                    os.environ.pop("AMBER_HEADLESS", None)
+                else:
+                    os.environ["AMBER_HEADLESS"] = previous_headless
         return _configure_workspace(args.workspace)
     if args.workspace_command == "doctor":
         checks = doctor_workspace(args.workspace, validate_external=args.external, include_service=args.service)
@@ -251,6 +262,10 @@ def _ensure_section(data: dict[str, Any], name: str) -> None:
 
 def _prompt_required(label: str, env_name: str, current: Any) -> str:
     existing = _existing_text(os.getenv(env_name) or current)
+    if headless_enabled():
+        if existing:
+            return existing
+        raise RuntimeError(f"{label} is required in headless mode. Set {env_name}.")
     prompt = f"{label}"
     if existing:
         prompt += f" [{_masked(existing) if 'KEY' in env_name or 'HASH' in env_name else existing}]"
@@ -264,6 +279,10 @@ def _prompt_required(label: str, env_name: str, current: Any) -> str:
 
 def _prompt_required_secret(label: str, env_name: str, current: Any) -> str:
     existing = _existing_text(os.getenv(env_name) or current)
+    if headless_enabled():
+        if existing:
+            return existing
+        raise RuntimeError(f"{label} is required in headless mode. Set {env_name}.")
     prompt = f"{label}"
     if existing:
         prompt += f" [{_masked(existing)}]"
@@ -277,6 +296,8 @@ def _prompt_required_secret(label: str, env_name: str, current: Any) -> str:
 
 def _prompt_optional_secret(label: str, env_name: str, current: Any = None) -> str | None:
     existing = _existing_text(os.getenv(env_name) or current)
+    if headless_enabled():
+        return existing or None
     prompt = f"{label}"
     if existing:
         prompt += f" [{_masked(existing)}]"
@@ -295,6 +316,8 @@ def _prompt_secret(prompt: str) -> str:
 def _prompt_choice(label: str, choices: tuple[str, ...], default: str) -> str:
     if default not in choices:
         raise ValueError("default must be one of choices.")
+    if headless_enabled():
+        return default
     if choice_menu_supported():
         return choices[read_choice(label, choices, choices.index(default))]
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -12,6 +13,23 @@ from src.cli_input import choice_menu_supported, headless_enabled, read_choice, 
 
 
 CODEX_AUTH_METHODS = ("api-key", "device", "access-token")
+HELP_ACCENT = "\033[38;5;218m"
+HELP_RESET = "\033[0m"
+HELP_COMMANDS = {
+    "configure",
+    "doctor",
+    "init",
+    "install",
+    "run",
+    "service",
+    "start",
+    "status",
+    "stop",
+    "uninstall",
+    "version",
+    "workspace",
+}
+HELP_ACCENT_OPTIONS = {"--workspace"}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -39,16 +57,99 @@ def _main(argv: list[str] | None = None) -> int:
     return 2
 
 
+class AmberArgumentParser(argparse.ArgumentParser):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        kwargs.setdefault("color", False)
+        super().__init__(*args, **kwargs)
+
+    def format_help(self) -> str:
+        return _accent_help(super().format_help())
+
+    def format_usage(self) -> str:
+        return _accent_help(super().format_usage())
+
+
+def _accent_help(text: str) -> str:
+    if not _help_color_enabled():
+        return text
+    return "".join(_accent_help_line(line) for line in text.splitlines(keepends=True))
+
+
+def _help_color_enabled() -> bool:
+    if os.getenv("NO_COLOR") is not None or os.getenv("TERM") == "dumb":
+        return False
+    force_color = os.getenv("FORCE_COLOR") or os.getenv("CLICOLOR_FORCE")
+    if force_color and force_color != "0":
+        return True
+    return sys.stdout.isatty()
+
+
+def _accent_help_line(line: str) -> str:
+    body, newline = _split_line_ending(line)
+    stripped = body.lstrip()
+    indent = body[: len(body) - len(stripped)]
+
+    # emphasize the usage label and the command name without recoloring arguments broadly
+    if stripped.startswith("usage: "):
+        return _accent_usage_line(body) + newline
+    if stripped in {"positional arguments:", "options:"}:
+        return f"{indent}{_accent(stripped)}{newline}"
+    if stripped.startswith("Amber "):
+        return f"{indent}{_accent('Amber')}{stripped[len('Amber'):]}{newline}"
+
+    command_line = _accent_command_action_line(indent, stripped)
+    if command_line is not None:
+        return command_line + newline
+    return _accent_option_tokens(body) + newline
+
+
+def _split_line_ending(line: str) -> tuple[str, str]:
+    if line.endswith("\r\n"):
+        return line[:-2], "\r\n"
+    if line.endswith("\n"):
+        return line[:-1], "\n"
+    return line, ""
+
+
+def _accent_usage_line(line: str) -> str:
+    usage = "usage: "
+    if line.startswith(usage):
+        line = f"{_accent('usage:')} {line[len(usage):]}"
+    line = re.sub(r"(?<=\s)amber(?=\s|$)", _accent("amber"), line, count=1)
+    return _accent_option_tokens(line)
+
+
+def _accent_command_action_line(indent: str, stripped: str) -> str | None:
+    match = re.match(r"^(\S+)(.*)$", stripped)
+    if match is None or match.group(1) not in HELP_COMMANDS:
+        return None
+    return f"{indent}{_accent(match.group(1))}{match.group(2)}"
+
+
+def _accent_option_tokens(text: str) -> str:
+    for option in sorted(HELP_ACCENT_OPTIONS, key=len, reverse=True):
+        text = re.sub(rf"(?<![\w-]){re.escape(option)}(?![\w-])", _accent(option), text)
+    return text
+
+
+def _accent(text: str) -> str:
+    return f"{HELP_ACCENT}{text}{HELP_RESET}"
+
+
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="amber", description="Amber workspace runtime")
+    parser = AmberArgumentParser(prog="amber", description="Amber workspace runtime")
     parser.add_argument("--workspace", help="Workspace name or path. With no command, aliases to `run`.")
-    subparsers = parser.add_subparsers(dest="command")
+    subparsers = parser.add_subparsers(dest="command", parser_class=AmberArgumentParser)
 
     run_parser = subparsers.add_parser("run", help="Run Amber for a workspace.")
     run_parser.add_argument("--workspace", required=True, help="Workspace name or path.")
 
     workspace_parser = subparsers.add_parser("workspace", help="Manage Amber workspaces.")
-    workspace_subparsers = workspace_parser.add_subparsers(dest="workspace_command", required=True)
+    workspace_subparsers = workspace_parser.add_subparsers(
+        dest="workspace_command",
+        required=True,
+        parser_class=AmberArgumentParser,
+    )
     init_parser = workspace_subparsers.add_parser("init", help="Create a workspace.")
     init_parser.add_argument("name")
     init_parser.add_argument("--overwrite", action="store_true", help="Overwrite seeded config, prompts, and skills.")
@@ -61,7 +162,11 @@ def _build_parser() -> argparse.ArgumentParser:
     doctor_parser.add_argument("--service", action="store_true", help="Include systemd user service status.")
 
     service_parser = subparsers.add_parser("service", help="Manage the optional systemd user service.")
-    service_subparsers = service_parser.add_subparsers(dest="service_command", required=True)
+    service_subparsers = service_parser.add_subparsers(
+        dest="service_command",
+        required=True,
+        parser_class=AmberArgumentParser,
+    )
     install_parser = service_subparsers.add_parser("install", help="Install the systemd user unit.")
     install_parser.add_argument("--workspace", required=True)
     install_parser.add_argument("--enable", action="store_true")

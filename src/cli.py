@@ -180,13 +180,18 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _run(args: argparse.Namespace) -> int:
+    asyncio.run(_run_telegram_app(args.workspace))
+    return 0
+
+
+async def _run_telegram_app(workspace: str | Path) -> None:
     from src.config.config import get_settings
     from src.runtime import build_application
 
-    settings = get_settings(args.workspace)
+    # build telegram runtime inside the loop that will own telethon callbacks
+    settings = get_settings(workspace)
     app = build_application(settings=settings, enable_telegram=True)
-    asyncio.run(app.run_telegram_forever())
-    return 0
+    await app.run_telegram_forever()
 
 
 def _workspace(args: argparse.Namespace) -> int:

@@ -132,7 +132,8 @@ def build_application(
             telegram_config = TelegramReceiverConfig.from_settings(settings)
             if not telegram_config.api_id or not telegram_config.api_hash:
                 raise RuntimeError("Missing Telegram API credentials.")
-            loop = asyncio.get_event_loop()
+            # bind telegram transport to the loop that will drive the runtime
+            loop = asyncio.get_running_loop()
             telegram_client = TelegramClient(str(telegram_config.session_path), int(telegram_config.api_id), telegram_config.api_hash, loop=loop)
             transport = TelegramTransport(telegram_client, loop)
             receiver = TelegramReceiver(telegram_client, message_archive, state_store, transport)

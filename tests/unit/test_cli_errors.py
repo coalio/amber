@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -23,6 +24,30 @@ def test_main_prints_runtime_errors_without_traceback(monkeypatch, capsys) -> No
     assert captured.out == ""
     assert captured.err == "error: setup failed\n"
     assert "Traceback" not in captured.err
+
+
+def test_run_builds_telegram_runtime_inside_event_loop(monkeypatch) -> None:
+    events: list[str] = []
+
+    class FakeApp:
+        async def run_telegram_forever(self) -> None:
+            asyncio.get_running_loop()
+            events.append("ran")
+
+    def fake_build_application(*, settings, enable_telegram: bool) -> FakeApp:
+        asyncio.get_running_loop()
+        assert settings == "settings"
+        assert enable_telegram is True
+        events.append("built")
+        return FakeApp()
+
+    monkeypatch.setattr("src.config.config.get_settings", lambda workspace: "settings")
+    monkeypatch.setattr("src.runtime.build_application", fake_build_application)
+
+    result = cli._run(SimpleNamespace(workspace="indiedreamers"))
+
+    assert result == 0
+    assert events == ["built", "ran"]
 
 
 def test_codex_cgroup_setup_error_mentions_saved_workspace() -> None:

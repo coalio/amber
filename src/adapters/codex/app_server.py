@@ -12,6 +12,7 @@ import uuid
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
+from urllib import request
 from urllib.parse import parse_qs, urlparse
 
 
@@ -38,6 +39,26 @@ CLARIFICATION_POLICY = {
 }
 USER_FACING_EVENT_TYPES = {"AmberAskUserQuestion", "AmberNotifyUser"}
 ASSISTANT_TEXT_NOTIFICATION_METHODS = {"item/created", "item/updated", "item/completed", "turn/completed"}
+
+
+def _health_payload() -> dict[str, Any]:
+    return {
+        "ok": True,
+        "app_server_id": APP_SERVER_ID,
+        "runner": "codex-cli",
+        "yolo_mode": YOLO_MODE,
+    }
+
+
+def _health_url_is_ready(host: str, port: int) -> bool:
+    with request.urlopen(f"http://{host}:{port}/health", timeout=1) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    return (
+        isinstance(payload, dict)
+        and payload.get("ok") is True
+        and payload.get("runner") == "codex-cli"
+        and payload.get("yolo_mode") is True
+    )
 
 
 @dataclass
@@ -981,16 +1002,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         if parsed.path == "/health":
-            _json_response(
-                self,
-                200,
-                {
-                    "ok": True,
-                    "app_server_id": APP_SERVER_ID,
-                    "runner": "codex-cli",
-                    "yolo_mode": YOLO_MODE,
-                },
-            )
+            _json_response(self, 200, _health_payload())
             return
         if parsed.path == "/events":
             query = parse_qs(parsed.query)
@@ -1140,7 +1152,11 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--health-check", action="store_true")
     args = parser.parse_args()
+    if args.health_check:
+        host = "127.0.0.1" if args.host == "0.0.0.0" else args.host
+        raise SystemExit(0 if _health_url_is_ready(host, args.port) else 1)
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     server.serve_forever()
 

@@ -5,6 +5,8 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 import src.adapters.codex.adapter as codex_adapter_module
 from src.adapters.codex import app_server as codex_app_server
 from src.adapters.base import BaseAdapter
@@ -411,6 +413,48 @@ def test_codex_container_omits_resource_flags_when_limits_are_disabled(tmp_path:
     assert "--memory=4g" not in run_call
     assert "--cpus=2" not in run_call
     assert "--pids-limit=512" not in run_call
+
+
+def test_codex_adapter_recreates_container_when_port_forward_is_stale() -> None:
+    calls: list[list[str]] = []
+    adapter = CodexAdapter(container_name="codex-sandbox")
+    adapter._app_server_is_healthy = lambda: False
+    adapter._container_app_server_is_healthy = lambda: True
+    adapter._run = lambda args: calls.append(args) or subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+    adapter._ensure_container = lambda: calls.append(["ensure-container"])
+
+    adapter._recreate_container_if_port_forward_is_stale()
+
+    assert calls == [
+        ["rm", "-f", "codex-sandbox"],
+        ["ensure-container"],
+    ]
+
+
+def test_codex_adapter_checks_container_health_with_app_server_script() -> None:
+    calls: list[list[str]] = []
+
+    def command_runner(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    adapter = CodexAdapter(app_server_port=9876, container_name="codex-sandbox", command_runner=command_runner)
+
+    assert adapter._container_app_server_is_healthy() is True
+    assert calls == [
+        [
+            "podman",
+            "exec",
+            "codex-sandbox",
+            "python3",
+            "/work/.amber_codex_app_server.py",
+            "--health-check",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "9876",
+        ]
+    ]
 
 
 def test_codex_dependency_bootstrap_omits_cgroup_mode_when_limits_are_disabled(tmp_path: Path) -> None:
@@ -939,3 +983,24 @@ def test_codex_app_server_starts_real_codex_in_yolo_mode() -> None:
     assert thread_params["sandbox"] == "danger-full-access"
     assert turn_params["approvalPolicy"] == "never"
     assert turn_params["sandboxPolicy"] == {"type": "dangerFullAccess"}
+
+
+def test_codex_app_server_health_check_cli(monkeypatch) -> None:
+    seen: list[tuple[str, int]] = []
+
+    def fake_health_url_is_ready(host: str, port: int) -> bool:
+        seen.append((host, port))
+        return True
+
+    monkeypatch.setattr(codex_app_server, "_health_url_is_ready", fake_health_url_is_ready)
+    monkeypatch.setattr(
+        codex_app_server.sys,
+        "argv",
+        ["app_server.py", "--health-check", "--host", "0.0.0.0", "--port", "9876"],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        codex_app_server.main()
+
+    assert exc_info.value.code == 0
+    assert seen == [("127.0.0.1", 9876)]

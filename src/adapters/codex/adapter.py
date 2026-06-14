@@ -416,8 +416,9 @@ class CodexAdapter(BaseAdapter):
             return
         self._ensure_dependency_image()
         self._ensure_container()
-        self._ensure_codex_updated()
         self._install_app_server_script()
+        self._recreate_container_if_port_forward_is_stale()
+        self._ensure_codex_updated()
         self._stop_unhealthy_app_server_process()
         self._start_app_server_process()
         self._wait_until_ready()
@@ -532,6 +533,30 @@ class CodexAdapter(BaseAdapter):
         )
         self._progress("creating codex sandbox container")
         self._run(args)
+
+    def _recreate_container_if_port_forward_is_stale(self) -> None:
+        if self._app_server_is_healthy():
+            return
+        if not self._container_app_server_is_healthy():
+            return
+        self._progress("recreating codex sandbox container with stale port forward")
+        self._run(["rm", "-f", self._container_name])
+        self._ensure_container()
+
+    def _container_app_server_is_healthy(self) -> bool:
+        return self._podman_success(
+            [
+                "exec",
+                self._container_name,
+                "python3",
+                "/work/.amber_codex_app_server.py",
+                "--health-check",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(self._app_server_port),
+            ]
+        )
 
     def _is_runtime_image_name(self, image_name: str) -> bool:
         return image_name == self._runtime_image or image_name == f"localhost/{self._runtime_image}"

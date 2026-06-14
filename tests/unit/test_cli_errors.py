@@ -50,6 +50,29 @@ def test_run_builds_telegram_runtime_inside_event_loop(monkeypatch) -> None:
     assert events == ["built", "ran"]
 
 
+def test_service_stop_cleans_codex_container_before_systemctl(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(
+        "src.config.workspace.stop_workspace_codex_containers",
+        lambda workspace: calls.append(["cleanup", workspace]),
+    )
+
+    def fake_run(command: list[str], **_kwargs):
+        calls.append(command)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+
+    result = cli._service(SimpleNamespace(service_command="stop", workspace="indiedreamers"))
+
+    assert result == 0
+    assert calls == [
+        ["cleanup", "indiedreamers"],
+        ["systemctl", "--user", "stop", "amber-indiedreamers.service"],
+    ]
+
+
 def test_codex_cgroup_setup_error_mentions_saved_workspace() -> None:
     message = cli._format_codex_setup_error(
         RuntimeError('Podman command failed (125): podman run\nError: could not find cgroup mount in "/proc/self/cgroup"'),

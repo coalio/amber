@@ -165,6 +165,7 @@ def service_unit_path(workspace: str | Path) -> Path:
 def render_user_service(workspace: str | Path) -> str:
     resolved = workspace_dir(workspace)
     executable = amber_home() / "bin" / "amber"
+    cleanup_command = codex_container_cleanup_command(resolved)
     return "\n".join(
         [
             "[Unit]",
@@ -176,6 +177,8 @@ def render_user_service(workspace: str | Path) -> str:
             "Type=simple",
             f"Environment=AMBER_HOME={amber_home()}",
             f"ExecStart={_systemd_escape(str(executable))} run --workspace {_systemd_escape(str(resolved))}",
+            f"ExecStop={_systemd_ignored_shell_command(cleanup_command)}",
+            "TimeoutStopSec=25s",
             "Restart=on-failure",
             "RestartSec=5",
             "WorkingDirectory=%h",
@@ -208,6 +211,36 @@ def uninstall_user_service(workspace: str | Path) -> None:
     if path.exists():
         path.unlink()
     subprocess.run(["systemctl", "--user", "daemon-reload"], check=False)
+
+
+def codex_container_cleanup_command(workspace: str | Path) -> list[str]:
+    # share the exact podman cleanup contract between systemd and the cli
+    settings = get_settings(workspace)
+    executable = shutil.which(settings.codex_podman_executable) or settings.codex_podman_executable
+    command = [executable]
+    if settings.codex_podman_cgroup_manager:
+        command.append(f"--cgroup-manager={settings.codex_podman_cgroup_manager}")
+    command.extend(
+        [
+            "rm",
+            "-f",
+            settings.codex_container_name,
+            f"{settings.codex_container_name}-bootstrap",
+        ]
+    )
+    return command
+
+
+def stop_workspace_codex_containers(workspace: str | Path) -> None:
+    # keep service stop best-effort when workspace config or podman is unavailable
+    try:
+        command = codex_container_cleanup_command(workspace)
+    except Exception:
+        return
+    try:
+        subprocess.run(command, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        return
 
 
 def service_status_check(workspace: str | Path) -> DoctorCheck:
@@ -464,3 +497,8 @@ def _linear_check(api_key: str, api_url: str) -> DoctorCheck:
 
 def _systemd_escape(value: str) -> str:
     return shlex.quote(value)
+
+
+def _systemd_ignored_shell_command(command: list[str]) -> str:
+    shell_command = f"{shlex.join(command)} >/dev/null 2>&1 || true"
+    return f"-/bin/sh -lc {_systemd_escape(shell_command)}"

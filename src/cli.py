@@ -220,7 +220,12 @@ def _workspace(args: argparse.Namespace) -> int:
 
 
 def _service(args: argparse.Namespace) -> int:
-    from src.config.workspace import install_user_service, service_unit_name, uninstall_user_service
+    from src.config.workspace import (
+        install_user_service,
+        service_unit_name,
+        stop_workspace_codex_containers,
+        uninstall_user_service,
+    )
 
     unit_name = service_unit_name(args.workspace)
     if args.service_command == "install":
@@ -232,6 +237,8 @@ def _service(args: argparse.Namespace) -> int:
         print(f"removed user service: {unit_name}")
         return 0
     if args.service_command in {"start", "stop", "status"}:
+        if args.service_command == "stop":
+            stop_workspace_codex_containers(args.workspace)
         command = ["systemctl", "--user", args.service_command, unit_name]
         return subprocess.run(command, check=False).returncode
     raise RuntimeError(f"Unknown service command: {args.service_command}")

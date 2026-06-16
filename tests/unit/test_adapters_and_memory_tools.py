@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from datetime import timedelta
 from pathlib import Path
@@ -416,6 +417,8 @@ def test_codex_container_omits_resource_flags_when_limits_are_disabled(tmp_path:
     adapter._ensure_container()
 
     run_call = next(call for call in calls if call[:3] == ["podman", "run", "-d"])
+    assert run_call[run_call.index("--user") + 1] == str(os.getuid())
+    assert run_call[-3:] == ["bash", "-c", "while true; do sleep 3600; done"]
     assert "--cgroups=disabled" not in run_call
     assert "--memory=4g" not in run_call
     assert "--cpus=2" not in run_call

@@ -73,7 +73,8 @@ def test_user_service_unit_uses_workspace_and_amber_home(monkeypatch, tmp_path) 
 
     assert f"Environment=AMBER_HOME={tmp_path / '.amber'}" in unit
     assert f"ExecStart={tmp_path / '.amber' / 'bin' / 'amber'} run --workspace {workspace}" in unit
-    assert "rm -f amber-indiedreamers-codex amber-indiedreamers-codex-bootstrap" in unit
+    assert "KillMode=process" in unit
+    assert "rm --force --ignore amber-indiedreamers-codex amber-indiedreamers-codex-bootstrap" in unit
     assert "TimeoutStopSec=25s" in unit
     path = install_user_service("indiedreamers")
     assert path == tmp_path / ".config" / "systemd" / "user" / "amber-indiedreamers.service"

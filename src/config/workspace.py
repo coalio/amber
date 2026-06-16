@@ -175,6 +175,7 @@ def render_user_service(workspace: str | Path) -> str:
             "",
             "[Service]",
             "Type=simple",
+            "KillMode=process",
             f"Environment=AMBER_HOME={amber_home()}",
             f"ExecStart={_systemd_escape(str(executable))} run --workspace {_systemd_escape(str(resolved))}",
             f"ExecStop={_systemd_ignored_shell_command(cleanup_command)}",
@@ -223,7 +224,8 @@ def codex_container_cleanup_command(workspace: str | Path) -> list[str]:
     command.extend(
         [
             "rm",
-            "-f",
+            "--force",
+            "--ignore",
             settings.codex_container_name,
             f"{settings.codex_container_name}-bootstrap",
         ]

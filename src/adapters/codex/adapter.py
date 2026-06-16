@@ -493,6 +493,8 @@ class CodexAdapter(BaseAdapter):
             "--name",
             self._container_name,
             "--userns=keep-id",
+            "--user",
+            str(os.getuid()),
             "--network=slirp4netns",
             "-p",
             f"127.0.0.1:{self._app_server_port}:{self._app_server_port}",
@@ -527,7 +529,7 @@ class CodexAdapter(BaseAdapter):
                 "/work",
                 self._runtime_image,
                 "bash",
-                "-lc",
+                "-c",
                 "while true; do sleep 3600; done",
             ]
         )

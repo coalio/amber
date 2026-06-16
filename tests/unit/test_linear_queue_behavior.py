@@ -23,7 +23,16 @@ from src.utils.scheduler import RuntimeScheduler
 from src.utils.time import local_now, utc_now
 
 
-def test_linear_receiver_emits_only_planned_project_tasks_due_today_or_tomorrow(tmp_path) -> None:
+READY_STATUSES = ("Todo",)
+TERMINAL_STATUSES = ("Done", "Canceled", "Duplicate")
+STATUS_TARGETS = {
+    "in_progress": "In Progress",
+    "under_review": "In Review",
+    "completed": "Done",
+}
+
+
+def test_linear_receiver_emits_only_ready_project_tasks_due_today_or_tomorrow(tmp_path) -> None:
     EventBus.reset_for_tests()
     timezone_name = "America/Managua"
     today = local_now(timezone_name).date()
@@ -45,6 +54,8 @@ def test_linear_receiver_emits_only_planned_project_tasks_due_today_or_tomorrow(
         timezone_name=timezone_name,
         poll_seconds=60,
         due_window_days=2,
+        ready_to_start_statuses=READY_STATUSES,
+        terminal_statuses=TERMINAL_STATUSES,
     )
     events: list[LinearTaskListReceivedEvent] = []
     EventBus.subscribe("LinearTaskListReceivedEvent", events.append)
@@ -72,6 +83,8 @@ def test_linear_receiver_allows_other_projects_while_one_project_is_busy(tmp_pat
         timezone_name=timezone_name,
         poll_seconds=60,
         due_window_days=2,
+        ready_to_start_statuses=READY_STATUSES,
+        terminal_statuses=TERMINAL_STATUSES,
     )
     events: list[LinearTaskListReceivedEvent] = []
     EventBus.subscribe("LinearTaskListReceivedEvent", events.append)
@@ -112,6 +125,8 @@ def test_linear_receiver_blocks_same_project_while_running_waiting_or_under_revi
             timezone_name=timezone_name,
             poll_seconds=60,
             due_window_days=2,
+            ready_to_start_statuses=READY_STATUSES,
+            terminal_statuses=TERMINAL_STATUSES,
         )
         before_count = len(events)
         receiver.poll_once()
@@ -141,6 +156,8 @@ def test_linear_receiver_blocks_same_project_while_running_waiting_or_under_revi
         timezone_name=timezone_name,
         poll_seconds=60,
         due_window_days=2,
+        ready_to_start_statuses=READY_STATUSES,
+        terminal_statuses=TERMINAL_STATUSES,
     )
     before_count = len(events)
     receiver.poll_once()
@@ -176,6 +193,8 @@ def test_linear_receiver_orders_by_due_date_then_linear_priority(tmp_path) -> No
         timezone_name=timezone_name,
         poll_seconds=60,
         due_window_days=2,
+        ready_to_start_statuses=READY_STATUSES,
+        terminal_statuses=TERMINAL_STATUSES,
     )
     events: list[LinearTaskListReceivedEvent] = []
     EventBus.subscribe("LinearTaskListReceivedEvent", events.append)
@@ -195,14 +214,16 @@ def test_codex_run_task_records_selected_linear_task(tmp_path) -> None:
                 "identifier": "LIN-1",
                 "title": "Small task",
                 "due_date": local_now(timezone_name).date().isoformat(),
-                "status": "Planned",
+                "status": "Todo",
                 "project": "Amber",
             }
         ],
         seen_at=utc_now(),
     )
     linear_client = FakeLinearMutationClient()
-    adapter_registry = AdapterRegistry([FakeCodexAdapter(), LinearAdapter(api_key=None, client=linear_client)])
+    adapter_registry = AdapterRegistry(
+        [FakeCodexAdapter(), LinearAdapter(api_key=None, client=linear_client, status_names=STATUS_TARGETS)]
+    )
     session = ToolRegistry([GetTool(), CodexRunTask()]).new_session(
         runtime=ToolRuntime(adapter_registry=adapter_registry, state_store=state_store)
     )
@@ -276,7 +297,7 @@ def test_codex_run_task_resumes_stored_linear_thread_for_review_followup(tmp_pat
                 "identifier": "LIN-1",
                 "title": "Small task",
                 "due_date": local_now(timezone_name).date().isoformat(),
-                "status": "Planned",
+                "status": "Todo",
                 "project": "Amber",
             }
         ],
@@ -293,7 +314,9 @@ def test_codex_run_task_resumes_stored_linear_thread_for_review_followup(tmp_pat
     state_store.mark_linear_task_lifecycle_status(issue_id="issue-a", status_alias="under_review", timestamp=utc_now())
     codex_adapter = ResumingCodexAdapter()
     linear_client = FakeLinearMutationClient()
-    adapter_registry = AdapterRegistry([codex_adapter, LinearAdapter(api_key=None, client=linear_client)])
+    adapter_registry = AdapterRegistry(
+        [codex_adapter, LinearAdapter(api_key=None, client=linear_client, status_names=STATUS_TARGETS)]
+    )
     session = ToolRegistry([GetTool(), CodexRunTask()]).new_session(
         runtime=ToolRuntime(adapter_registry=adapter_registry, state_store=state_store)
     )
@@ -333,7 +356,7 @@ def test_codex_question_marks_linear_task_waiting_and_keeps_linear_in_progress(t
                 "identifier": "LIN-1",
                 "title": "Small task",
                 "due_date": local_now(timezone_name).date().isoformat(),
-                "status": "Planned",
+                "status": "Todo",
                 "project": "Amber",
             }
         ],
@@ -362,7 +385,9 @@ def test_codex_question_marks_linear_task_waiting_and_keeps_linear_in_progress(t
         MessageArchive.instance(),
         MemoryStore(tmp_path / "memories"),
         timezone_name,
-        adapter_registry=AdapterRegistry([LinearAdapter(api_key=None, client=linear_client)]),
+        adapter_registry=AdapterRegistry(
+            [LinearAdapter(api_key=None, client=linear_client, status_names=STATUS_TARGETS)]
+        ),
     ).handle_codex_question(
         CodexQuestionReceivedEvent(
             chat_id="codex:task-linear",
@@ -461,7 +486,7 @@ def _issue(
     due_date,
     *,
     state_type: str = "unstarted",
-    state_name: str = "Planned",
+    state_name: str = "Todo",
     priority: int | None = 0,
     project: str | None = "Amber",
 ) -> LinearIssue:

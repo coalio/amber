@@ -94,9 +94,10 @@ class Settings(BaseModel):
     linear_api_url: str
     linear_poll_seconds: float = Field(gt=0)
     linear_due_window_days: int = Field(ge=1)
-    linear_status_in_progress: str
-    linear_status_under_review: str
-    linear_status_completed: str
+    linear_project_statuses: dict[str, tuple[str, ...]]
+    linear_issue_statuses: dict[str, tuple[str, ...]]
+    linear_issue_ready_to_start_statuses: tuple[str, ...]
+    linear_issue_status_targets: dict[str, str]
 
     ai_system_casual_prompt_path: Path
     ai_system_work_prompt_path: Path
@@ -180,9 +181,19 @@ ENV_OVERRIDES: dict[str, tuple[str, ...]] = {
     "AMBER_LINEAR_API_URL": ("linear", "api_url"),
     "AMBER_LINEAR_POLL_SECONDS": ("linear", "poll_seconds"),
     "AMBER_LINEAR_DUE_WINDOW_DAYS": ("linear", "due_window_days"),
-    "AMBER_LINEAR_STATUS_IN_PROGRESS": ("linear", "status_in_progress"),
-    "AMBER_LINEAR_STATUS_UNDER_REVIEW": ("linear", "status_under_review"),
-    "AMBER_LINEAR_STATUS_COMPLETED": ("linear", "status_completed"),
+    "AMBER_LINEAR_PROJECT_STATUS_PLANNED": ("linear", "project", "statuses", "planned"),
+    "AMBER_LINEAR_PROJECT_STATUS_STARTED": ("linear", "project", "statuses", "started"),
+    "AMBER_LINEAR_PROJECT_STATUS_COMPLETED": ("linear", "project", "statuses", "completed"),
+    "AMBER_LINEAR_PROJECT_STATUS_CANCELED": ("linear", "project", "statuses", "canceled"),
+    "AMBER_LINEAR_ISSUE_READY_TO_START_STATUSES": ("linear", "issue", "ready_to_start_statuses"),
+    "AMBER_LINEAR_ISSUE_STATUS_BACKLOG": ("linear", "issue", "statuses", "backlog"),
+    "AMBER_LINEAR_ISSUE_STATUS_UNSTARTED": ("linear", "issue", "statuses", "unstarted"),
+    "AMBER_LINEAR_ISSUE_STATUS_STARTED": ("linear", "issue", "statuses", "started"),
+    "AMBER_LINEAR_ISSUE_STATUS_COMPLETED": ("linear", "issue", "statuses", "completed"),
+    "AMBER_LINEAR_ISSUE_STATUS_CANCELED": ("linear", "issue", "statuses", "canceled"),
+    "AMBER_LINEAR_ISSUE_TARGET_IN_PROGRESS": ("linear", "issue", "status_targets", "in_progress"),
+    "AMBER_LINEAR_ISSUE_TARGET_UNDER_REVIEW": ("linear", "issue", "status_targets", "under_review"),
+    "AMBER_LINEAR_ISSUE_TARGET_COMPLETED": ("linear", "issue", "status_targets", "completed"),
 }
 
 
@@ -240,6 +251,13 @@ def _get_settings_cached(workspace_key: str | None, config_key: str | None) -> S
     mode = str(data.get("mode") or "work").strip().lower()
     if mode not in {"casual", "work"}:
         raise RuntimeError("mode must be either 'casual' or 'work'.")
+
+    linear_project_statuses = _status_groups_value(_value(data, ("linear", "project", "statuses")))
+    linear_issue_statuses = _status_groups_value(_value(data, ("linear", "issue", "statuses")))
+    linear_ready_to_start_statuses = _string_list_value(
+        _value_or_none(data, ("linear", "issue", "ready_to_start_statuses"))
+    ) or linear_issue_statuses.get("unstarted", ())
+    linear_issue_status_targets = _linear_issue_status_targets(data, linear_issue_statuses)
 
     prompt_dir = _workspace_or_resource_dir(resolved_workspace / "prompts", resource_prompt_dir())
     skill_dir = _workspace_or_resource_dir(resolved_workspace / "codex-skills", resource_codex_skill_dir())
@@ -336,9 +354,10 @@ def _get_settings_cached(workspace_key: str | None, config_key: str | None) -> S
         linear_api_url=str(_value(data, ("linear", "api_url"))),
         linear_poll_seconds=float(_value(data, ("linear", "poll_seconds"))),
         linear_due_window_days=int(_value(data, ("linear", "due_window_days"))),
-        linear_status_in_progress=str(_value(data, ("linear", "status_in_progress"))),
-        linear_status_under_review=str(_value(data, ("linear", "status_under_review"))),
-        linear_status_completed=str(_value(data, ("linear", "status_completed"))),
+        linear_project_statuses=linear_project_statuses,
+        linear_issue_statuses=linear_issue_statuses,
+        linear_issue_ready_to_start_statuses=linear_ready_to_start_statuses,
+        linear_issue_status_targets=linear_issue_status_targets,
         ai_system_casual_prompt_path=casual_prompt_path,
         ai_system_work_prompt_path=work_prompt_path,
         ai_system_prompt_path=work_prompt_path if mode == "work" else casual_prompt_path,
@@ -486,6 +505,73 @@ def _list_value(value: Any) -> tuple[str, ...]:
         if item.strip()
     }
     return tuple(sorted(values))
+
+
+def _string_list_value(value: Any) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, (list, tuple)):
+        raw_items = [str(item) for item in value]
+    else:
+        raw_items = str(value).replace("\n", ",").replace(";", ",").split(",")
+    values: list[str] = []
+    seen: set[str] = set()
+    for raw_item in raw_items:
+        item = raw_item.strip()
+        normalized = item.casefold()
+        if item and normalized not in seen:
+            values.append(item)
+            seen.add(normalized)
+    return tuple(values)
+
+
+def _status_groups_value(value: Any) -> dict[str, tuple[str, ...]]:
+    if not isinstance(value, dict):
+        raise RuntimeError("Linear status groups must be a TOML table.")
+    return {
+        str(group).strip(): _string_list_value(statuses)
+        for group, statuses in value.items()
+        if str(group).strip()
+    }
+
+
+def _linear_issue_status_targets(
+    data: dict[str, Any],
+    issue_statuses: dict[str, tuple[str, ...]],
+) -> dict[str, str]:
+    # derive lifecycle targets from ordered issue status groups
+    targets = {
+        "in_progress": _status_at(issue_statuses.get("started", ()), 0),
+        "under_review": _status_at(issue_statuses.get("started", ()), 1)
+        or _status_at(issue_statuses.get("started", ()), 0),
+        "completed": _status_at(issue_statuses.get("completed", ()), 0),
+    }
+
+    # allow workspaces to pin lifecycle targets explicitly
+    explicit_targets = _value_or_none(data, ("linear", "issue", "status_targets"))
+    if isinstance(explicit_targets, dict):
+        for alias, value in explicit_targets.items():
+            target = _first_string_value(value)
+            if target:
+                targets[str(alias).strip()] = target
+
+    # fail early when lifecycle automation lacks a concrete issue status
+    missing = [alias for alias, target in targets.items() if not target]
+    if missing:
+        joined = ", ".join(sorted(missing))
+        raise RuntimeError(f"Linear issue status target configuration is missing: {joined}")
+    return {alias: target for alias, target in targets.items() if target}
+
+
+def _status_at(statuses: tuple[str, ...], index: int) -> str | None:
+    if index < len(statuses):
+        return statuses[index]
+    return None
+
+
+def _first_string_value(value: Any) -> str | None:
+    values = _string_list_value(value)
+    return values[0] if values else None
 
 
 def _workspace_or_resource_dir(workspace_path: Path, resource_path: Path) -> Path:

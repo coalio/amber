@@ -24,6 +24,13 @@ from src.tools.registry import ToolRuntime, default_tool_registry
 from src.utils.time import utc_now
 
 
+LINEAR_STATUS_TARGETS = {
+    "in_progress": "In Progress",
+    "under_review": "In Review",
+    "completed": "Done",
+}
+
+
 def test_memory_tools_manage_expertise_and_read_profile(tmp_path: Path) -> None:
     memory_store = MemoryStore(tmp_path / "memories")
     session = default_tool_registry().new_session(runtime=ToolRuntime(memory_store=memory_store))
@@ -293,7 +300,7 @@ def test_codex_task_lifecycle_handler_uses_pr_events_for_linear_status(tmp_path:
                 "identifier": "LIN-1",
                 "title": "Small task",
                 "due_date": "2026-06-01",
-                "status": "Planned",
+                "status": "Todo",
                 "project": "Amber",
             }
         ],
@@ -301,7 +308,7 @@ def test_codex_task_lifecycle_handler_uses_pr_events_for_linear_status(tmp_path:
     )
     codex_adapter = CodexAdapter()
     linear_client = FakeLinearMutationClient()
-    linear_adapter = LinearAdapter(api_key=None, client=linear_client)
+    linear_adapter = LinearAdapter(api_key=None, client=linear_client, status_names=LINEAR_STATUS_TARGETS)
     handler = CodexTaskLifecycleHandler(
         codex_adapter,
         adapter_registry=AdapterRegistry([linear_adapter]),
@@ -367,7 +374,7 @@ def test_codex_task_lifecycle_handler_uses_pr_events_for_linear_status(tmp_path:
         )
     )
 
-    assert linear_client.status_updates == [("issue-a", "Under Review"), ("issue-a", "Done")]
+    assert linear_client.status_updates == [("issue-a", "In Review"), ("issue-a", "Done")]
     assert state_store.snapshot().linear_tasks["issue-a"].queue_status == "completed"
     assert wake_events[-1].payload.reason == "linear_pr_merged"
 

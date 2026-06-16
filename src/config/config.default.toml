@@ -80,6 +80,19 @@ api_key = "none"
 api_url = "https://api.linear.app/graphql"
 poll_seconds = 60.0
 due_window_days = 2
-status_in_progress = "In Progress"
-status_under_review = "Under Review"
-status_completed = "Done"
+
+[linear.project.statuses]
+planned = ["Planned"]
+started = ["Started"]
+completed = ["Completed"]
+canceled = ["Canceled"]
+
+[linear.issue]
+ready_to_start_statuses = ["Todo"]
+
+[linear.issue.statuses]
+backlog = ["Backlog"]
+unstarted = ["Todo"]
+started = ["In Progress", "In Review"]
+completed = ["Done"]
+canceled = ["Canceled", "Duplicate"]

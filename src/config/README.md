@@ -20,6 +20,12 @@ Important environment variables:
 
 Workspace-owned files are intended to be user-editable. Release-level `system/` prompts are shipped with the release because they must track runtime behavior.
 
+## Linear Statuses
+
+Linear issue and project status names are configured under `linear.issue.statuses` and `linear.project.statuses`.
+`linear.issue.ready_to_start_statuses` controls which assigned issues become task candidates for Amber.
+Lifecycle updates derive their default target names from the configured issue status arrays and can be overridden with `linear.issue.status_targets`.
+
 ## Common Changes
 
 - Add a config option to `config.default.toml`, `Settings`, env override mapping, and the relevant subsystem config class.

@@ -389,21 +389,29 @@ class GlobalStateStore:
             self._state.linear_last_poll_at = seen_at
             self._persist(self._state)
 
-    def available_linear_tasks(self) -> list[LinearQueuedTask]:
+    def available_linear_tasks(self, *, ready_statuses: tuple[str, ...] = ()) -> list[LinearQueuedTask]:
         with self._lock:
+            ready_status_keys = {
+                status_key
+                for status in ready_statuses
+                if (status_key := _linear_status_key(status))
+            }
             busy_projects = self._busy_linear_projects_locked()
             tasks = [
                 task.model_copy(deep=True)
                 for task in self._state.linear_tasks.values()
                 if task.queue_status == "available"
                 and _is_explicit_project(task.project)
-                and task.status == "Planned"
+                and (not ready_status_keys or _linear_status_key(task.status) in ready_status_keys)
                 and _project_key(task.project) not in busy_projects
             ]
         return sorted(tasks, key=_linear_task_sort_key)
 
-    def linear_available_queue_hash(self) -> str:
-        tasks = [task.ai_payload() for task in self.available_linear_tasks()]
+    def linear_available_queue_hash(self, *, ready_statuses: tuple[str, ...] = ()) -> str:
+        tasks = [
+            task.ai_payload()
+            for task in self.available_linear_tasks(ready_statuses=ready_statuses)
+        ]
         body = json.dumps(tasks, sort_keys=True, ensure_ascii=False)
         return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
@@ -644,6 +652,10 @@ def _is_explicit_project(project: str | None) -> bool:
 
 def _project_key(project: str | None) -> str:
     return str(project or "").strip().casefold()
+
+
+def _linear_status_key(status: str | None) -> str:
+    return str(status or "").strip().casefold()
 
 
 def _linear_priority_sort_value(priority: int | None) -> int:

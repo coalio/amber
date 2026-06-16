@@ -31,14 +31,21 @@ def test_linear_receiver_config_comes_from_settings(monkeypatch) -> None:
     monkeypatch.setenv("AMBER_LINEAR_API_URL", "https://linear.example/graphql")
     monkeypatch.setenv("AMBER_LINEAR_POLL_SECONDS", "1")
     monkeypatch.setenv("AMBER_LINEAR_DUE_WINDOW_DAYS", "3")
+    monkeypatch.setenv("AMBER_LINEAR_ISSUE_READY_TO_START_STATUSES", "Ready, Next")
+    monkeypatch.setenv("AMBER_LINEAR_ISSUE_STATUS_STARTED", "Doing, Reviewing")
 
-    config = LinearReceiverConfig.from_settings(get_settings())
+    settings = get_settings()
+    config = LinearReceiverConfig.from_settings(settings)
 
     assert config.enabled is True
     assert config.api_key == "lin_api_key"
     assert config.api_url == "https://linear.example/graphql"
     assert config.poll_seconds == 1
     assert config.due_window_days == 3
+    assert config.ready_to_start_statuses == ("Ready", "Next")
+    assert settings.linear_issue_statuses["started"] == ("Doing", "Reviewing")
+    assert settings.linear_issue_status_targets["in_progress"] == "Doing"
+    assert settings.linear_issue_status_targets["under_review"] == "Reviewing"
 
     get_settings.cache_clear()
 

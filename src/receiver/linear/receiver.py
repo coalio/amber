@@ -26,12 +26,17 @@ class LinearReceiver:
         timezone_name: str,
         poll_seconds: float,
         due_window_days: int,
+        ready_to_start_statuses: tuple[str, ...],
+        terminal_statuses: tuple[str, ...],
     ) -> None:
         self._client = client
         self._state_store = state_store
         self._timezone_name = timezone_name
         self._poll_seconds = poll_seconds
         self._due_window_days = due_window_days
+        self._ready_to_start_statuses = tuple(ready_to_start_statuses)
+        self._ready_to_start_status_keys = _status_set(ready_to_start_statuses)
+        self._terminal_status_keys = _status_set(terminal_statuses)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._wake_subscription_id: str | None = None
@@ -78,13 +83,13 @@ class LinearReceiver:
             today = local_now(self._timezone_name).date()
             window_end = today + timedelta(days=self._due_window_days - 1)
             for issue in issues:
-                if issue.is_terminal:
+                if self._issue_is_terminal(issue):
                     self._state_store.mark_linear_task_lifecycle_status(
                         issue_id=issue.id,
                         status_alias="completed",
                         timestamp=utc_now(),
                     )
-            due_issues = [issue for issue in issues if self._issue_is_in_due_window(issue, today, window_end)]
+            due_issues = [issue for issue in issues if self._issue_is_task_candidate(issue, today, window_end)]
             self._state_store.sync_linear_queue(
                 [issue.to_queue_payload() for issue in due_issues],
                 seen_at=utc_now(),
@@ -96,19 +101,25 @@ class LinearReceiver:
         while not self._stop.wait(self._poll_seconds):
             self.poll_once()
 
-    def _issue_is_in_due_window(self, issue: LinearIssue, today: date, window_end: date) -> bool:
-        if issue.is_terminal:
+    def _issue_is_task_candidate(self, issue: LinearIssue, today: date, window_end: date) -> bool:
+        # keep project statuses out of issue readiness decisions
+        if self._issue_is_terminal(issue):
             return False
         if not str(issue.project or "").strip():
             return False
-        if (issue.state.name if issue.state is not None else None) != "Planned":
+        issue_status = issue.state.name if issue.state is not None else None
+        if _normalized_status(issue_status) not in self._ready_to_start_status_keys:
             return False
         if issue.due_date is None:
             return False
         return today <= issue.due_date <= window_end
 
+    def _issue_is_terminal(self, issue: LinearIssue) -> bool:
+        status_name = issue.state.name if issue.state is not None else None
+        return issue.is_terminal or _normalized_status(status_name) in self._terminal_status_keys
+
     def _emit_if_available(self, *, today: date, window_end: date) -> None:
-        tasks = self._state_store.available_linear_tasks()
+        tasks = self._state_store.available_linear_tasks(ready_statuses=self._ready_to_start_statuses)
         if not tasks:
             busy_reason = self._state_store.linear_busy_reason()
             if busy_reason is not None:
@@ -117,7 +128,9 @@ class LinearReceiver:
                     extra={"event": "linear.queue_emit_skipped", "context": {"reason": busy_reason}},
                 )
             return
-        queue_hash = self._state_store.linear_available_queue_hash()
+        queue_hash = self._state_store.linear_available_queue_hash(
+            ready_statuses=self._ready_to_start_statuses
+        )
         snapshot = self._state_store.snapshot()
         if snapshot.linear_last_emitted_queue_hash == queue_hash:
             self._logger.info(
@@ -134,3 +147,11 @@ class LinearReceiver:
         )
         self._state_store.mark_linear_queue_emitted(queue_hash)
         EventBus.emit(LinearTaskListReceivedEvent(chat_id="linear:queue", payload=payload))
+
+
+def _status_set(statuses: tuple[str, ...]) -> set[str]:
+    return {normalized for status in statuses if (normalized := _normalized_status(status))}
+
+
+def _normalized_status(status: str | None) -> str:
+    return str(status or "").strip().casefold()

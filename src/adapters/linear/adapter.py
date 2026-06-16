@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from src.adapters.base import BaseAdapter
@@ -14,18 +15,15 @@ class LinearAdapter(BaseAdapter):
         *,
         api_key: str | None,
         api_url: str = "https://api.linear.app/graphql",
-        status_in_progress: str = "In Progress",
-        status_under_review: str = "Under Review",
-        status_completed: str = "Done",
+        status_names: Mapping[str, str] | None = None,
         client: LinearGraphQLClient | None = None,
     ) -> None:
         self._api_key = api_key
         self._api_url = api_url
         self._client = client
         self._status_names = {
-            "in_progress": status_in_progress,
-            "under_review": status_under_review,
-            "completed": status_completed,
+            str(alias): str(name)
+            for alias, name in (status_names or {}).items()
         }
 
     def preflight(self) -> None:

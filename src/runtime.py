@@ -101,9 +101,7 @@ def build_application(
     linear_adapter = LinearAdapter(
         api_key=settings.linear_api_key,
         api_url=settings.linear_api_url,
-        status_in_progress=settings.linear_status_in_progress,
-        status_under_review=settings.linear_status_under_review,
-        status_completed=settings.linear_status_completed,
+        status_names=settings.linear_issue_status_targets,
     )
     adapter_registry.register(linear_adapter)
     codex_receiver = CodexReceiver(codex_adapter, memory_store, settings.always_surface_telegram_ids)
@@ -123,6 +121,8 @@ def build_application(
             timezone_name=settings.timezone_name,
             poll_seconds=linear_config.poll_seconds,
             due_window_days=linear_config.due_window_days,
+            ready_to_start_statuses=linear_config.ready_to_start_statuses,
+            terminal_statuses=linear_config.terminal_statuses,
         )
     scorer = _build_attention_scorer(attention_scorer, mode=settings.attention_scorer)
     receiver = None

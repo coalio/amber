@@ -108,6 +108,74 @@ def test_ai_layer_retries_with_descriptive_harness_feedback_and_previous_decisio
     assert retry_call["harness_feedback"]["recent_window"][0]["content_preview"] == "hey amber whats up"
 
 
+def test_ai_layer_retries_required_response_sleep_decision() -> None:
+    frame = _build_frame("hey amber whats up", response_required=True)
+    client = RecordingSemanticClient(
+        [
+            SemanticDecisionSchema(
+                action="sleep",
+                reply_to_message_id=None,
+                chat_id=1001001001,
+                reply_text=None,
+                referenced_memory_ids=[],
+                confidence=0.82,
+                notes=["fatigue"],
+                trigger_message_id=1083,
+                session_id="session_debug",
+            ),
+            SemanticDecisionSchema(
+                action="reply",
+                reply_to_message_id=None,
+                chat_id=1001001001,
+                reply_text="i'm here, just winding down",
+                referenced_memory_ids=[],
+                confidence=0.87,
+                notes=[],
+                trigger_message_id=1083,
+                session_id="session_debug",
+            ),
+        ]
+    )
+    layer = AILayer(AIConfig(semantic_retry_budget=2, max_reply_chars=320), client)
+
+    result = layer._call_with_harness(frame)
+
+    assert result.action == "reply"
+    assert result.reply_text == "i'm here, just winding down"
+    assert result.reply_to_message_id == 1083
+    assert len(client.calls) == 2
+    retry_call = client.calls[1]
+    assert retry_call["harness_feedback"]["code"] == "required_response_cannot_be_silent"
+    assert retry_call["harness_feedback"]["response_required_reason"] == "always_surface_sender"
+
+
+def test_ai_layer_fallback_replies_for_required_response_when_retry_budget_exhausts() -> None:
+    frame = _build_frame("hey amber whats up", response_required=True)
+    client = RecordingSemanticClient(
+        [
+            SemanticDecisionSchema(
+                action="sleep",
+                reply_to_message_id=None,
+                chat_id=1001001001,
+                reply_text=None,
+                referenced_memory_ids=[],
+                confidence=0.82,
+                notes=["fatigue"],
+                trigger_message_id=1083,
+                session_id="session_debug",
+            ),
+        ]
+    )
+    layer = AILayer(AIConfig(semantic_retry_budget=0, max_reply_chars=320), client)
+
+    result = layer._call_with_harness(frame)
+
+    assert result.action == "reply"
+    assert result.reply_to_message_id == 1083
+    assert result.reply_text == "i'm here, but i need a minute to answer properly"
+    assert "required_response_fallback" in result.notes
+
+
 def test_ai_layer_logs_critical_when_semantic_decision_validation_throws(caplog: pytest.LogCaptureFixture) -> None:
     frame = _build_frame("hey amber whats up")
     layer = AILayer(AIConfig(semantic_retry_budget=1, max_reply_chars=320), InvalidSemanticClient())
@@ -223,6 +291,7 @@ def _build_frame(
     trigger_text: str,
     *,
     pending_interruption: PendingInterruptionPayload | None = None,
+    response_required: bool = False,
 ) -> ContextFramePayload:
     message = ContextFrameMessagePayload(
         message_id=1083,
@@ -248,6 +317,8 @@ def _build_frame(
         mood="joking",
         fatigue_notice=None,
         recommended_reply_candidate=1083,
+        response_required=response_required,
+        response_required_reason="always_surface_sender" if response_required else None,
         engaged_user_ids=["1001001001"],
         compacted_facts=[],
         expanded_memory_ids=[],

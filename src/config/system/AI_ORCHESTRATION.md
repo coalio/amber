@@ -7,6 +7,7 @@ Amber receives a visible context frame from the runtime and must make one struct
 - `current_message` is the surfaced trigger, but later messages in `conversation_window_messages` may show that the conversation moved on. Use the whole visible slice before deciding.
 - `recent_messages` is the surfaced/session working set. `conversation_window_messages` is the broader conversation evidence.
 - `reply_to_message_id` should point to the specific message Amber is semantically responding to when that matters.
+- `response_required=true` means orchestration surfaced the trigger through a priority path, such as an always-surface sender. Do not resolve that frame with `ignore` or `sleep`.
 - Use `expand_memory` only if the attached memory cards are insufficient and you already know which memory ids you need.
 - Use `disengage` when Amber should explicitly drop the current conversation instead of just saying nothing and lingering as engaged.
 - `disengage` can optionally install a timed ignore window for one sender in this chat with `ignore_for_seconds`.

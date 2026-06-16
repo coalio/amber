@@ -21,6 +21,8 @@ class ConversationSession:
     attention_classification: AttentionClassificationPayload | None = None
     topic_summary: str = "No stable topic yet."
     recommended_reply_candidate: int | None = None
+    response_required: bool = False
+    response_required_reason: str | None = None
     expanded_memory_ids: set[str] = field(default_factory=set)
     latest_trigger_message_id: int | None = None
     pending_surfaced_messages: dict[int, ContextFrameMessagePayload] = field(default_factory=dict)

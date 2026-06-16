@@ -13,8 +13,18 @@ from src.context.pipeline import ContextLayer
 from src.context.session.store import ConversationSession
 from src.events.action import MessageReadEvent, MessageReadPayload, OutboundDeliveryPayload, OutboundMessageSentEvent
 from src.events.bus import EventBus
+from src.events.attention import AttentionDecisionMadeEvent, AttentionDecisionPayload
 from src.events.context import ContextFrameMessagePayload, ContextFrameReadyEvent
-from src.events.receiver import TelegramSenderPayload, TelegramTypingPayload, TelegramTypingUpdatedEvent
+from src.events.outbound import OutboundMessagePreparedEvent, OutboundMessagePreparedPayload
+from src.events.receiver import (
+    TelegramAttachmentPayload,
+    TelegramMessagePayload,
+    TelegramReplySenderPayload,
+    TelegramSenderPayload,
+    TelegramTransportPayload,
+    TelegramTypingPayload,
+    TelegramTypingUpdatedEvent,
+)
 from src.state.store import GlobalStateStore
 from src.utils.message_archive import MessageArchive
 from src.utils.scheduler import RuntimeScheduler
@@ -68,6 +78,34 @@ def test_context_attaches_visible_read_metadata_when_pending_frame_surfaces(tmp_
     assert session.pending_first_surfaced_at is None
     assert session.read_cooldown_until is not None
     assert session.frame_in_flight is True
+
+
+def test_context_marks_always_surface_frames_response_required(tmp_path) -> None:
+    context_layer = _build_context_layer(tmp_path)
+
+    context_layer.handle_attention_decision(
+        AttentionDecisionMadeEvent(
+            chat_id=1001001001,
+            payload=AttentionDecisionPayload(
+                decision="surface_urgent",
+                message=_telegram_message_payload(412, "hey amber, how are you doing"),
+                attention_score=1.0,
+                heuristic_score=1.0,
+                model_score=1.0,
+                reasons=["work_mode_full_importance", "always_surface_sender"],
+                reply_target_candidate=412,
+            ),
+        )
+    )
+
+    session = context_layer._active_session
+    assert session is not None
+    frame = context_layer._build_frame_event(session)
+
+    assert session.response_required is True
+    assert session.response_required_reason == "always_surface_sender"
+    assert frame.payload.response_required is True
+    assert frame.payload.response_required_reason == "always_surface_sender"
 
 
 def test_follow_up_messages_flush_after_reply_and_read_through_reply(tmp_path) -> None:
@@ -356,7 +394,7 @@ def test_action_layer_marks_transport_read_records(tmp_path) -> None:
     assert [(item.chat_id, item.read_through_message_id) for item in transport.read_records] == [(1001001001, 500)]
 
 
-def test_action_layer_marks_visible_read_immediately_even_when_not_before_is_present(tmp_path) -> None:
+def test_action_layer_defers_session_visible_read_until_prepared_send(tmp_path) -> None:
     transport = RecordingTransport()
     action_layer = ActionLayer(
         ActionConfig(
@@ -388,7 +426,83 @@ def test_action_layer_marks_visible_read_immediately_even_when_not_before_is_pre
         )
     )
 
+    assert transport.read_records == []
+
+    action_layer.handle_prepared_message(
+        OutboundMessagePreparedEvent(
+            chat_id=1001001001,
+            payload=OutboundMessagePreparedPayload(
+                chat_id=1001001001,
+                session_id="sess_transport",
+                trigger_message_id=412,
+                ordered_messages=["reply"],
+                reply_to_message_id=412,
+                mood="calm",
+                no_send=False,
+                frame_created_at=utc_now(),
+                visible_read_not_before=utc_now() + timedelta(seconds=5),
+                visible_surfaced_message_ids=[412],
+                visible_surfaced_until_message_id=412,
+                visible_read_through_message_id=500,
+            ),
+        )
+    )
+
     assert [(item.chat_id, item.read_through_message_id) for item in transport.read_records] == [(1001001001, 500)]
+
+
+def test_action_layer_skips_deferred_visible_read_for_no_send(tmp_path) -> None:
+    transport = RecordingTransport()
+    action_layer = ActionLayer(
+        ActionConfig(
+            enable_real_delays=False,
+            disable_sleep_state=True,
+            transport_max_retries=1,
+            transport_retry_delay_seconds=2.0,
+        ),
+        transport,
+        GlobalStateStore(tmp_path / "runtime_state_no_send_visible.json", "America/Managua"),
+        RuntimeScheduler.instance(),
+        MessageArchive.instance(),
+        "America/Managua",
+    )
+
+    action_layer.handle_message_read(
+        MessageReadEvent(
+            chat_id=1001001001,
+            payload=MessageReadPayload(
+                chat_id=1001001001,
+                session_id="sess_transport",
+                trigger_message_id=412,
+                surfaced_message_ids=[412],
+                surfaced_until_message_id=412,
+                read_through_message_id=500,
+                mark_seen=False,
+                visible_not_before=utc_now() + timedelta(seconds=5),
+            ),
+        )
+    )
+    action_layer.handle_prepared_message(
+        OutboundMessagePreparedEvent(
+            chat_id=1001001001,
+            payload=OutboundMessagePreparedPayload(
+                chat_id=1001001001,
+                session_id="sess_transport",
+                trigger_message_id=412,
+                ordered_messages=[],
+                reply_to_message_id=None,
+                mood="calm",
+                no_send=True,
+                frame_created_at=utc_now(),
+                visible_read_not_before=utc_now() + timedelta(seconds=5),
+                visible_surfaced_message_ids=[412],
+                visible_surfaced_until_message_id=412,
+                visible_read_through_message_id=500,
+            ),
+        )
+    )
+
+    assert transport.read_records == []
 
 
 def test_action_layer_syncs_offline_presence_after_startup_without_engagement(tmp_path) -> None:
@@ -647,4 +761,20 @@ def _message_payload(message_id: int, content: str, *, minutes: int = 0) -> Cont
         sender_name="Fixture Sender",
         content=content,
         timestamp=datetime(2026, 4, 21, 3, 54 + minutes, 5, tzinfo=timezone.utc),
+    )
+
+
+def _telegram_message_payload(message_id: int, content: str) -> TelegramMessagePayload:
+    return TelegramMessagePayload(
+        message_id=message_id,
+        chat_id=1001001001,
+        sender=TelegramSenderPayload(id="user-123", name="Fixture Sender"),
+        timestamp=datetime(2026, 4, 21, 3, 54, 5, tzinfo=timezone.utc),
+        content=content,
+        raw_text=content,
+        reply_to_message_id=None,
+        reply_to_sender=TelegramReplySenderPayload(),
+        mentions=["amber"] if "amber" in content.lower() else [],
+        attachment=TelegramAttachmentPayload(),
+        transport=TelegramTransportPayload(peer_id=1001001001, raw_chat_id=1001001001, raw_message_id=message_id),
     )

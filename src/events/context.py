@@ -93,6 +93,8 @@ class ContextFramePayload(BaseModel):
     mood: str
     fatigue_notice: str | None = None
     recommended_reply_candidate: int | None = None
+    response_required: bool = False
+    response_required_reason: str | None = None
     engaged_user_ids: list[str] = Field(default_factory=list)
     compacted_facts: list[str] = Field(default_factory=list)
     expanded_memory_ids: list[str] = Field(default_factory=list)

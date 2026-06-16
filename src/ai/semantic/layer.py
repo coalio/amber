@@ -26,6 +26,19 @@ class ConsciousHarness:
         self._config = config
 
     def evaluate(self, frame: ContextFramePayload, decision: SemanticDecisionSchema) -> HarnessFailure | None:
+        if frame.response_required and decision.action in {"ignore", "sleep"}:
+            return HarnessFailure(
+                code="required_response_cannot_be_silent",
+                reason=(
+                    "This frame is marked response_required, so Amber must reply instead of choosing "
+                    f"`{decision.action}`."
+                ),
+                context={
+                    "response_required_reason": frame.response_required_reason,
+                    "current_message": self._message_subject(frame.current_message),
+                    "recent_window": self._window_context(frame),
+                },
+            )
         if decision.action != "reply":
             return None
         reply_text = (decision.reply_text or "").strip()
@@ -491,6 +504,24 @@ class AILayer:
         )
 
     def _fallback_decision(self, frame: ContextFramePayload, notes: list[str]) -> SemanticDecisionSchema:
+        if frame.response_required:
+            fallback_notes = [*notes, "required_response_fallback"]
+            return SemanticDecisionSchema(
+                action="reply",
+                reply_to_message_id=frame.recommended_reply_candidate or frame.current_message.message_id,
+                chat_id=frame.chat_id,
+                reply_text="i'm here, but i need a minute to answer properly",
+                referenced_memory_ids=[],
+                confidence=0.1,
+                notes=fallback_notes,
+                trigger_message_id=frame.trigger_message_id,
+                session_id=frame.session_id,
+                frame_created_at=frame.frame_created_at,
+                visible_read_not_before=frame.visible_read_not_before,
+                visible_surfaced_message_ids=list(frame.visible_surfaced_message_ids),
+                visible_surfaced_until_message_id=frame.visible_surfaced_until_message_id,
+                visible_read_through_message_id=frame.visible_read_through_message_id,
+            )
         return SemanticDecisionSchema(
             action="ignore",
             reply_to_message_id=None,

@@ -226,6 +226,69 @@ def test_disengage_clears_session_sets_ignore_and_writes_bad_memory(tmp_path) ->
     assert "negative_interaction" in memories[-1].tags
 
 
+def test_sleeping_disengage_does_not_mark_surfaced_message_seen(tmp_path) -> None:
+    state_store = GlobalStateStore(tmp_path / "runtime_state.json", "America/Managua")
+    memory_store = MemoryStore(tmp_path / "memories")
+    transport = RecordingTransport()
+    ActionLayer(
+        ActionConfig(
+            enable_real_delays=False,
+            disable_sleep_state=False,
+            transport_max_retries=1,
+            transport_retry_delay_seconds=2.0,
+        ),
+        transport,
+        state_store,
+        RuntimeScheduler.instance(),
+        MessageArchive.instance(),
+        "America/Managua",
+    )
+    context_layer = ContextLayer(
+        ContextConfig(
+            debounce_seconds=0.0,
+            idle_timeout_seconds=60.0,
+            competing_chat_timeout_seconds=15.0,
+            recent_message_budget=8,
+            max_compacted_facts=6,
+            disable_sleep_state=False,
+        ),
+        state_store,
+        RuntimeScheduler.instance(),
+        MessageArchive.instance(),
+        memory_store,
+        "America/Managua",
+    )
+    trigger_message = _context_message(412, "Fixture Sender", "user-123", "hey amber, how are you doing")
+    session = ConversationSession(
+        session_id="sess_sleeping_disengage",
+        chat_id=1001001001,
+        last_updated_at=utc_now(),
+        recent_messages=[trigger_message],
+        participant_names={"user-123": "Fixture Sender"},
+        engaged_user_ids={"user-123"},
+        latest_trigger_message_id=412,
+        pending_surfaced_messages={412: trigger_message},
+        pending_first_surfaced_at=utc_now(),
+        engagement_committed=True,
+    )
+    context_layer._active_session = session
+    state_store.update_action_state(
+        sleep_state="asleep",
+        slept_at=utc_now(),
+        scheduled_wake_at=utc_now() + timedelta(hours=8),
+    )
+
+    context_layer._disengage_session(
+        session,
+        correlation_id=None,
+        trigger_message_id=412,
+        reason="idle_timeout",
+    )
+
+    assert transport.read_records == []
+    assert state_store.snapshot().seen_through_by_chat == {}
+
+
 def test_disengage_writes_bad_memory_to_explicit_profile_owner(tmp_path) -> None:
     state_store = GlobalStateStore(tmp_path / "runtime_state.json", "America/Managua")
     memory_store = MemoryStore(tmp_path / "memories")

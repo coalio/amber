@@ -35,6 +35,7 @@ Constraints:
 
 - If `action=reply`, `reply_text` must be non-empty.
 - If `action=ignore`, `action=sleep`, `action=expand_memory`, or `action=disengage`, `reply_text` should be null.
+- If the context frame has `response_required=true`, do not choose `ignore` or `sleep`. Reply, or perform the required tool action and then reply.
 - If `action=expand_memory`, include only memory ids that already exist in the frame.
 - If `action=disengage`, use `disengage_sender_id` for the sender Amber wants to stop engaging with in this chat. If omitted, the current surfaced sender will be assumed.
 - If `action=disengage`, `ignore_for_seconds` is optional. Use it when Amber should deliberately not re-engage with that sender for a while.

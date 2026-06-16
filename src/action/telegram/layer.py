@@ -73,9 +73,12 @@ class ActionLayer:
             if event.payload.mark_seen:
                 self._state_store.mark_seen(event.payload.chat_id, event.payload.read_through_message_id)
                 self._pending_visible_reads.pop(key, None)
-            elif not event.payload.mark_seen:
+                self._transport.mark_read(event.payload.chat_id, event.payload.read_through_message_id)
+            elif event.origin == "action" or event.payload.session_id is None:
                 self._seen_visible_read_keys.add(key)
-            self._transport.mark_read(event.payload.chat_id, event.payload.read_through_message_id)
+                self._transport.mark_read(event.payload.chat_id, event.payload.read_through_message_id)
+            else:
+                self._pending_visible_reads[key] = event.payload
 
     def refresh_sleep_window(self) -> None:
         state = self._state_store.snapshot()
@@ -134,6 +137,27 @@ class ActionLayer:
                     mark_seen=False,
                     visible_not_before=payload.visible_read_not_before,
                 )
+
+            # finish no-send delivery without telegram io or visible-read side effects
+            if payload.no_send or not payload.ordered_messages:
+                if active_visible_read is not None:
+                    self._pending_visible_reads.pop(read_key, None)
+                self._completed_event_ids.add(event.event_id)
+                delivery = OutboundDeliveryPayload(
+                    chat_id=payload.chat_id,
+                    reply_to_message_id=payload.reply_to_message_id,
+                    ordered_messages=[],
+                    sent_message_ids=[],
+                    planned_message_count=0,
+                    interrupted=False,
+                    interruption_message_id=None,
+                    no_send=True,
+                    delivered_at=utc_now(),
+                    session_id=payload.session_id,
+                    trigger_message_id=payload.trigger_message_id,
+                )
+                EventBus.emit(OutboundMessageSentEvent(correlation_id=event.correlation_id, chat_id=event.chat_id, payload=delivery))
+                return
 
             # resolve who can interrupt this batch
             reply_target_sender_id, reply_target_sender_name = self._resolve_reply_target(payload.chat_id, payload.reply_to_message_id)
@@ -223,25 +247,6 @@ class ActionLayer:
                 )
                 self._pending_visible_reads.pop(read_key, None)
                 self._seen_visible_read_keys.add(read_key)
-
-            # finish no-send delivery without telegram io
-            if payload.no_send or not payload.ordered_messages:
-                self._completed_event_ids.add(event.event_id)
-                delivery = OutboundDeliveryPayload(
-                    chat_id=payload.chat_id,
-                    reply_to_message_id=payload.reply_to_message_id,
-                    ordered_messages=[],
-                    sent_message_ids=[],
-                    planned_message_count=0,
-                    interrupted=False,
-                    interruption_message_id=None,
-                    no_send=True,
-                    delivered_at=utc_now(),
-                    session_id=payload.session_id,
-                    trigger_message_id=payload.trigger_message_id,
-                )
-                EventBus.emit(OutboundMessageSentEvent(correlation_id=event.correlation_id, chat_id=event.chat_id, payload=delivery))
-                return
 
             # send chunks in order; retry one transport failure
             try:

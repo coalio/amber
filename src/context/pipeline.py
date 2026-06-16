@@ -96,6 +96,9 @@ class ContextLayer:
             for memory in event.payload.memory_cards:
                 session.memory_cards[memory.memory_id] = memory
             session.attention_classification = event.payload.classification
+            if "always_surface_sender" in event.payload.reasons:
+                session.response_required = True
+                session.response_required_reason = "always_surface_sender"
             self._inject_replied_message_if_needed(session, converted)
             self._refresh_session_metadata(session)
             self._ensure_initial_engagement_delay(session, processed_at)
@@ -940,6 +943,8 @@ class ContextLayer:
                 mood=state.mood,
                 fatigue_notice=fatigue_notice_text,
                 recommended_reply_candidate=session.recommended_reply_candidate,
+                response_required=session.response_required,
+                response_required_reason=session.response_required_reason,
                 engaged_user_ids=sorted(session.engaged_user_ids),
                 compacted_facts=list(session.compacted_facts),
                 expanded_memory_ids=sorted(session.expanded_memory_ids),
@@ -1062,7 +1067,11 @@ class ContextLayer:
         latest_message_id = self._message_archive.latest_message_id(session.chat_id)
         pending_messages = sorted(session.pending_surfaced_messages.values(), key=lambda item: (item.timestamp, item.message_id))
         read_through_message_id = None
-        if pending_messages or latest_message_id is not None:
+
+        # avoid acknowledging a surfaced session that ended because amber went to sleep
+        state = self._state_store.snapshot()
+        should_mark_seen = self._config.disable_sleep_state or state.sleep_state == "awake"
+        if should_mark_seen and (pending_messages or latest_message_id is not None):
             surfaced_message_ids = [item.message_id for item in pending_messages]
             surfaced_until_message_id = max(surfaced_message_ids) if surfaced_message_ids else None
             read_through_message_id = max(

@@ -89,7 +89,7 @@ def _due_window_issues(issues: list[LinearIssue], timezone_name: str, due_window
     return [
         issue
         for issue in issues
-        if not issue.is_terminal and issue.due_date is not None and today <= issue.due_date <= window_end
+        if not issue.is_terminal and issue.due_date is not None and issue.due_date <= window_end
     ]
 
 

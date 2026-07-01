@@ -401,7 +401,6 @@ class GlobalStateStore:
                 task.model_copy(deep=True)
                 for task in self._state.linear_tasks.values()
                 if task.queue_status == "available"
-                and _is_explicit_project(task.project)
                 and (not ready_status_keys or _linear_status_key(task.status) in ready_status_keys)
                 and _project_key(task.project) not in busy_projects
             ]

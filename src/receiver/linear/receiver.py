@@ -89,7 +89,7 @@ class LinearReceiver:
                         status_alias="completed",
                         timestamp=utc_now(),
                     )
-            due_issues = [issue for issue in issues if self._issue_is_task_candidate(issue, today, window_end)]
+            due_issues = [issue for issue in issues if self._issue_is_task_candidate(issue, window_end)]
             self._state_store.sync_linear_queue(
                 [issue.to_queue_payload() for issue in due_issues],
                 seen_at=utc_now(),
@@ -101,18 +101,18 @@ class LinearReceiver:
         while not self._stop.wait(self._poll_seconds):
             self.poll_once()
 
-    def _issue_is_task_candidate(self, issue: LinearIssue, today: date, window_end: date) -> bool:
-        # keep project statuses out of issue readiness decisions
+    def _issue_is_task_candidate(self, issue: LinearIssue, window_end: date) -> bool:
+        # only unfinished ready issues enter the queue; project membership is optional
         if self._issue_is_terminal(issue):
-            return False
-        if not str(issue.project or "").strip():
             return False
         issue_status = issue.state.name if issue.state is not None else None
         if _normalized_status(issue_status) not in self._ready_to_start_status_keys:
             return False
+
+        # due_window_days limits future lookahead, not overdue catch-up
         if issue.due_date is None:
             return False
-        return today <= issue.due_date <= window_end
+        return issue.due_date <= window_end
 
     def _issue_is_terminal(self, issue: LinearIssue) -> bool:
         status_name = issue.state.name if issue.state is not None else None
@@ -141,7 +141,7 @@ class LinearReceiver:
         payload = LinearTaskListPayload(
             tasks=[LinearTaskPayload.model_validate(task.ai_payload()) for task in tasks],
             generated_at=utc_now(),
-            window_start_date=today.isoformat(),
+            window_start_date=_queue_window_start(tasks, default=today).isoformat(),
             window_end_date=window_end.isoformat(),
             queue_hash=queue_hash,
         )
@@ -155,3 +155,16 @@ def _status_set(statuses: tuple[str, ...]) -> set[str]:
 
 def _normalized_status(status: str | None) -> str:
     return str(status or "").strip().casefold()
+
+
+def _queue_window_start(tasks, *, default: date) -> date:
+    due_dates: list[date] = []
+    for task in tasks:
+        due_date = getattr(task, "due_date", None)
+        if not due_date:
+            continue
+        try:
+            due_dates.append(date.fromisoformat(str(due_date)))
+        except ValueError:
+            continue
+    return min(due_dates, default=default)

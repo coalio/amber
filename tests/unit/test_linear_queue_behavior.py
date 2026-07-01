@@ -32,17 +32,18 @@ STATUS_TARGETS = {
 }
 
 
-def test_linear_receiver_emits_only_ready_project_tasks_due_today_or_tomorrow(tmp_path) -> None:
+def test_linear_receiver_emits_ready_tasks_due_on_or_before_window_end(tmp_path) -> None:
     EventBus.reset_for_tests()
     timezone_name = "America/Managua"
     today = local_now(timezone_name).date()
+    overdue = today - timedelta(days=14)
     state_store = GlobalStateStore(tmp_path / "state.json", timezone_name)
     receiver = LinearReceiver(
         client=FakeLinearClient(
             [
                 _issue("issue-today", "LIN-1", today),
                 _issue("issue-tomorrow", "LIN-2", today + timedelta(days=1)),
-                _issue("issue-overdue", "LIN-3", today - timedelta(days=1)),
+                _issue("issue-overdue", "LIN-3", overdue),
                 _issue("issue-later", "LIN-4", today + timedelta(days=2)),
                 _issue("issue-no-due", "LIN-5", None),
                 _issue("issue-done", "LIN-6", today, state_type="completed"),
@@ -63,7 +64,9 @@ def test_linear_receiver_emits_only_ready_project_tasks_due_today_or_tomorrow(tm
     receiver.poll_once()
 
     assert len(events) == 1
-    assert [task.identifier for task in events[0].payload.tasks] == ["LIN-1", "LIN-2"]
+    assert events[0].payload.window_start_date == overdue.isoformat()
+    assert events[0].payload.window_end_date == (today + timedelta(days=1)).isoformat()
+    assert [task.identifier for task in events[0].payload.tasks] == ["LIN-3", "LIN-1", "LIN-8", "LIN-2"]
 
 
 def test_linear_receiver_allows_other_projects_while_one_project_is_busy(tmp_path) -> None:

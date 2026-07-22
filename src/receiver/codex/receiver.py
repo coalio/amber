@@ -70,6 +70,7 @@ class CodexReceiver:
                         app_server_id=notification.app_server_id,
                         task_id=notification.task_id,
                         notification_id=notification.notification_id,
+                        notification_kind=notification.notification_kind,
                         message=notification.message,
                         task_description=notification.task_description,
                         context=dict(notification.context),

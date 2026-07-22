@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from src.events.attention import AttentionClassificationPayload, MemoryCardPayload
 from src.events.base import BaseEvent
-from src.events.codex import CodexCandidatePersonPayload
+from src.events.codex import CodexCandidatePersonPayload, CodexNotificationKind
 from src.events.linear import LinearTaskPayload
 
 
@@ -54,16 +54,26 @@ class OpenQuestionPayload(BaseModel):
     user_replies: list[str] = Field(default_factory=list)
 
 
+class CodexCandidateConversationPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sender_id: str
+    chat_id: int | str
+    recent_messages: list[ContextFrameMessagePayload] = Field(default_factory=list)
+
+
 class CodexNotificationFramePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     app_server_id: str
     task_id: str
     notification_id: str
+    notification_kind: CodexNotificationKind
     message: str
     task_description: str
     context: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
     candidate_people: list[CodexCandidatePersonPayload] = Field(default_factory=list)
+    candidate_conversations: list[CodexCandidateConversationPayload] = Field(default_factory=list)
 
 
 class LinearTaskListFramePayload(BaseModel):

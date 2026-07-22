@@ -11,12 +11,15 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 from urllib import error, parse, request
 
 from src.adapters.base import BaseAdapter
 from src.utils.ids import new_event_id
 from src.utils.logging import get_logger
+
+
+CodexNotificationKind = Literal["milestone", "completion", "blocked", "failed"]
 
 
 @dataclass(frozen=True)
@@ -34,6 +37,7 @@ class CodexNotification:
     app_server_id: str
     task_id: str
     notification_id: str
+    notification_kind: CodexNotificationKind
     message: str
     task_description: str
     context: dict[str, Any] = field(default_factory=dict)
@@ -104,6 +108,7 @@ class CodexAdapter(BaseAdapter):
         rules_skill_path: Path | None = None,
         command_runner=subprocess.run,
         progress_callback: Callable[[str], None] | None = None,
+        release_version: str = "development",
     ) -> None:
         self._workdir = workdir or Path.home() / "codex-sandbox" / "work"
         self._github_auth_dir = github_auth_dir or Path.home() / "codex-sandbox" / "github-auth"
@@ -129,6 +134,7 @@ class CodexAdapter(BaseAdapter):
         self._app_server_command = app_server_command
         self._command_runner = command_runner
         self._progress_callback = progress_callback
+        self._release_version = release_version
         self._handlers: dict[str, CodexQuestionHandler] = {}
         self._notification_handlers: dict[str, CodexNotificationHandler] = {}
         self._task_completed_handlers: dict[str, CodexTaskCompletedHandler] = {}
@@ -215,6 +221,7 @@ class CodexAdapter(BaseAdapter):
             "task_description": task_description,
             "context": raw_context,
             "thread_id": thread_id,
+            "release_version": self._release_version,
             "system_prompt": self._system_prompt(),
             "codex_model": self._codex_model,
             "codex_reasoning_effort": self._codex_reasoning_effort,
@@ -260,8 +267,8 @@ class CodexAdapter(BaseAdapter):
                 {
                     "name": "AmberNotifyUser",
                     "description": (
-                        "Ask Amber to notify the user about progress or completion. "
-                        "This tool does not expect a response."
+                        "Ask Amber to evaluate one meaningful milestone, completion, blocker, or failure. "
+                        "Routine progress is not user-facing, and completion must include implementation and validation."
                     ),
                 },
                 {
@@ -752,6 +759,7 @@ class CodexAdapter(BaseAdapter):
                                 app_server_id=str(item.get("app_server_id") or "codex"),
                                 task_id=str(item.get("task_id") or ""),
                                 notification_id=str(item.get("notification_id") or new_event_id()),
+                                notification_kind=_notification_kind(item.get("notification_kind")),
                                 message=str(item.get("message") or ""),
                                 task_description=str(item.get("task_description") or ""),
                                 context=dict(item.get("context") or {}),
@@ -927,3 +935,10 @@ def _optional_response_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _notification_kind(value: Any) -> CodexNotificationKind:
+    notification_kind = str(value or "").strip().lower()
+    if notification_kind not in {"milestone", "completion", "blocked", "failed"}:
+        raise ValueError(f"Unsupported Codex notification kind: {notification_kind or '<missing>'}")
+    return cast(CodexNotificationKind, notification_kind)

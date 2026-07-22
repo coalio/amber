@@ -19,12 +19,13 @@ from src.events.ai import SemanticDecisionMadeEvent
 from src.events.attention import AttentionDecisionMadeEvent
 from src.events.bus import EventBus, emitter_context
 from src.events.codex import (
-    CodexNotificationPayload,
+    CodexCandidatePersonPayload,
     CodexNotificationReceivedEvent,
     CodexQuestionPayload,
     CodexQuestionReceivedEvent,
 )
 from src.events.context import (
+    CodexCandidateConversationPayload,
     CodexNotificationFramePayload,
     ContextFrameMessagePayload,
     ContextFramePayload,
@@ -238,7 +239,7 @@ class ContextLayer:
                     correlation_id=event.correlation_id,
                     chat_id=event.chat_id,
                     payload=ContextFramePayload(
-                        session_id=f"codex-notify:{notification.task_id}:{notification.notification_id}",
+                        session_id=f"codex-notify:{notification.app_server_id}:{notification.task_id}",
                         chat_id=event.chat_id or f"codex:{notification.task_id}",
                         trigger_message_id=0,
                         current_message=current_message,
@@ -254,6 +255,7 @@ class ContextLayer:
                             app_server_id=notification.app_server_id,
                             task_id=notification.task_id,
                             notification_id=notification.notification_id,
+                            notification_kind=notification.notification_kind,
                             message=notification.message,
                             task_description=notification.task_description,
                             context={
@@ -262,10 +264,35 @@ class ContextLayer:
                                 if isinstance(value, (str, int, float, bool)) or value is None
                             },
                             candidate_people=list(notification.candidate_people),
+                            candidate_conversations=self._codex_candidate_conversations(
+                                notification.candidate_people
+                            ),
                         ),
                     ),
                 )
             )
+
+    def _codex_candidate_conversations(
+        self,
+        candidates: list[CodexCandidatePersonPayload],
+    ) -> list[CodexCandidateConversationPayload]:
+        conversations: list[CodexCandidateConversationPayload] = []
+        for candidate in candidates:
+            archived = self._message_archive.recent_messages(
+                candidate.chat_id,
+                limit=self._config.recent_message_budget,
+            )
+            conversations.append(
+                CodexCandidateConversationPayload(
+                    sender_id=candidate.sender_id,
+                    chat_id=candidate.chat_id,
+                    recent_messages=[
+                        self._convert_archived_message(message, source="codex_candidate_history")
+                        for message in archived
+                    ],
+                )
+            )
+        return conversations
 
     def _linear_task_list_content(self, task_list) -> str:
         lines = [

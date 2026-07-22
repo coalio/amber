@@ -9,7 +9,14 @@ from src.ai.config import AIConfig
 from src.ai.semantic.layer import AILayer, ConsciousHarness
 from src.ai.semantic.schema import InterruptionDecisionSchema, SemanticDecisionSchema
 from src.events.bus import EventBus
-from src.events.context import ContextFrameMessagePayload, ContextFramePayload, PendingInterruptionPayload
+from src.events.codex import CodexCandidatePersonPayload
+from src.events.context import (
+    CodexCandidateConversationPayload,
+    CodexNotificationFramePayload,
+    ContextFrameMessagePayload,
+    ContextFramePayload,
+    PendingInterruptionPayload,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -59,6 +66,66 @@ def test_harness_still_rejects_near_duplicate_reply() -> None:
     assert "triggering message 1083" in failure.reason
     assert failure.context["offending_messages"][0]["message_id"] == 1083
     assert failure.context["recent_window"][0]["content_preview"] == "hey amber whats up"
+
+
+def test_harness_checks_only_selected_codex_candidate_history() -> None:
+    harness = ConsciousHarness(AIConfig(semantic_retry_budget=1, max_reply_chars=320))
+    frame = _build_frame("codex completion update")
+    prior_ack = ContextFrameMessagePayload(
+        message_id=901,
+        sender_id="amber-self",
+        sender_name="amber",
+        is_self=True,
+        content="implemented the parser and all tests pass",
+        timestamp=datetime(2026, 4, 21, 4, 30, 0, tzinfo=timezone.utc),
+    )
+    other_chat = ContextFrameMessagePayload(
+        message_id=902,
+        sender_id="user-b",
+        sender_name="Fixture Peer",
+        content="unrelated project update",
+        timestamp=datetime(2026, 4, 21, 4, 31, 0, tzinfo=timezone.utc),
+    )
+    candidates = [
+        CodexCandidatePersonPayload(sender_id="user-a", chat_id=1001001001, display_name="Fixture User"),
+        CodexCandidatePersonPayload(sender_id="user-b", chat_id=1001001002, display_name="Fixture Peer"),
+    ]
+    frame.codex_notification = CodexNotificationFramePayload(
+        app_server_id="codex-sandbox",
+        task_id="task-parser",
+        notification_id="notify-parser",
+        notification_kind="completion",
+        message="Parser implementation complete; all tests pass.",
+        task_description="Implement a parser.",
+        candidate_people=candidates,
+        candidate_conversations=[
+            CodexCandidateConversationPayload(
+                sender_id="user-a",
+                chat_id=1001001001,
+                recent_messages=[prior_ack],
+            ),
+            CodexCandidateConversationPayload(
+                sender_id="user-b",
+                chat_id=1001001002,
+                recent_messages=[other_chat],
+            ),
+        ],
+    )
+    repeated = SemanticDecisionSchema(
+        action="reply",
+        chat_id=1001001001,
+        reply_text="implemented the parser and all tests pass",
+        confidence=0.9,
+        codex_target_sender_id="user-a",
+    )
+    isolated = repeated.model_copy(update={"chat_id": 1001001002, "codex_target_sender_id": "user-b"})
+
+    failure = harness.evaluate(frame, repeated)
+
+    assert failure is not None
+    assert failure.code == "reply_too_similar_to_recent_message"
+    assert failure.context["offending_messages"][0]["message_id"] == 901
+    assert harness.evaluate(frame, isolated) is None
 
 
 def test_ai_layer_retries_with_descriptive_harness_feedback_and_previous_decision() -> None:

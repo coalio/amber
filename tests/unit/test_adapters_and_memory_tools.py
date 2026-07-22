@@ -72,7 +72,9 @@ def test_codex_receiver_surfaces_allowlisted_candidates_with_expertise(tmp_path:
     adapter = CodexAdapter()
     receiver = CodexReceiver(adapter, memory_store, ["1001001001"])
     seen: list[CodexQuestionReceivedEvent] = []
+    seen_notifications: list[CodexNotificationReceivedEvent] = []
     EventBus.subscribe("CodexQuestionReceivedEvent", seen.append)
+    EventBus.subscribe("CodexNotificationReceivedEvent", seen_notifications.append)
 
     receiver.register()
     adapter.emit_question_for_tests(
@@ -85,6 +87,17 @@ def test_codex_receiver_surfaces_allowlisted_candidates_with_expertise(tmp_path:
             context={"repo": "amber"},
         )
     )
+    adapter.emit_notification_for_tests(
+        CodexNotification(
+            app_server_id="codex-sandbox",
+            task_id="task_1",
+            notification_id="notify_1",
+            notification_kind="completion",
+            message="Implemented the script and all tests pass.",
+            task_description="Create a small Python script.",
+            context={"repo": "amber"},
+        )
+    )
 
     assert len(seen) == 1
     candidate = seen[0].payload.candidate_people[0]
@@ -93,6 +106,8 @@ def test_codex_receiver_surfaces_allowlisted_candidates_with_expertise(tmp_path:
     assert candidate.display_name == "Fixture Owner"
     assert candidate.expertise_tags == ["python", "telegram-backend"]
     assert candidate.project_owner_tags == ["amber"]
+    assert seen_notifications[0].payload.notification_kind == "completion"
+    assert seen_notifications[0].payload.candidate_people[0].sender_id == "1001001001"
 
 
 def test_codex_adapter_skips_question_completed_in_same_event_batch() -> None:
@@ -147,6 +162,7 @@ def test_codex_adapter_emits_user_notifications() -> None:
                     "app_server_id": "codex-sandbox",
                     "task_id": "task_1",
                     "notification_id": "notify_1",
+                    "notification_kind": "milestone",
                     "message": "The pull request is open.",
                     "task_description": "Implement the task.",
                     "context": {"pr": 12},
@@ -163,6 +179,7 @@ def test_codex_adapter_emits_user_notifications() -> None:
             app_server_id="codex-sandbox",
             task_id="task_1",
             notification_id="notify_1",
+            notification_kind="milestone",
             message="The pull request is open.",
             task_description="Implement the task.",
             context={"pr": 12},
@@ -289,6 +306,19 @@ def test_codex_start_task_includes_user_interaction_tools() -> None:
         "AmberNotifyUser",
         "AmberReportPullRequest",
     ]
+    assert captured["payload"]["release_version"] == "development"
+
+
+def test_codex_notify_tool_requires_typed_milestone_kind() -> None:
+    notify_tool = next(tool for tool in codex_app_server._dynamic_tools() if tool["name"] == "AmberNotifyUser")
+
+    assert notify_tool["inputSchema"]["required"] == ["notification_kind", "message"]
+    assert set(notify_tool["inputSchema"]["properties"]["notification_kind"]["enum"]) == {
+        "milestone",
+        "completion",
+        "blocked",
+        "failed",
+    }
 
 
 def test_codex_task_lifecycle_handler_uses_pr_events_for_linear_status(tmp_path: Path) -> None:
@@ -640,6 +670,7 @@ def test_codex_app_server_clarification_policy_discourages_trivial_questions() -
 def test_codex_app_server_notify_user_event() -> None:
     codex_app_server.TASKS.clear()
     codex_app_server.EVENTS.clear()
+    codex_app_server.RUNNERS.clear()
     codex_app_server.TASKS["task_1"] = {
         "status": "waiting_for_clarification",
         "task_description": "Open a pull request.",
@@ -648,6 +679,11 @@ def test_codex_app_server_notify_user_event() -> None:
     original_next_id = codex_app_server._next_id
     notification_id = "amber_notify_test"
     codex_app_server._next_id = lambda prefix: notification_id
+    runner = codex_app_server.CodexTaskRunner(
+        "task_1",
+        {"task_description": "Open a pull request.", "context": {}},
+    )
+    codex_app_server.RUNNERS["task_1"] = runner
 
     class FakeHandler:
         status: int | None = None
@@ -680,13 +716,19 @@ def test_codex_app_server_notify_user_event() -> None:
         codex_app_server.Handler._receive_notification(
             handler,
             "task_1",
-            {"message": "The pull request is open.", "context": {"pr": 12}},
+            {
+                "notification_kind": "milestone",
+                "message": "The pull request is open.",
+                "context": {"pr": 12},
+            },
         )
     finally:
         codex_app_server._next_id = original_next_id
+        codex_app_server.RUNNERS.clear()
 
     assert handler.status == 200
     assert codex_app_server.EVENTS[-1]["type"] == "AmberNotifyUser"
+    assert codex_app_server.EVENTS[-1]["notification_kind"] == "milestone"
     assert codex_app_server.EVENTS[-1]["message"] == "The pull request is open."
 
 
@@ -721,6 +763,7 @@ def test_codex_app_server_completion_forwards_captured_assistant_text() -> None:
 
     assert [event["type"] for event in codex_app_server.EVENTS] == ["AmberNotifyUser", "CodexTaskCompleted"]
     notification = codex_app_server.EVENTS[0]
+    assert notification["notification_kind"] == "completion"
     assert notification["message"] == "Created /work/echo.py and tests pass."
     assert notification["context"]["guardrail"] == "terminal_user_facing_event"
     assert notification["context"]["source"] == "captured_assistant_message"
@@ -745,7 +788,8 @@ def test_codex_app_server_completion_without_terminal_tool_emits_guard_notificat
 
     assert [event["type"] for event in codex_app_server.EVENTS] == ["AmberNotifyUser", "CodexTaskCompleted"]
     notification = codex_app_server.EVENTS[0]
-    assert "Codex finished without calling AmberNotifyUser or AmberAskUserQuestion" in notification["message"]
+    assert notification["notification_kind"] == "completion"
+    assert notification["message"] == "The task completed without a detailed result to report."
     assert notification["context"]["source"] == "missing_terminal_tool"
 
 
@@ -764,15 +808,62 @@ def test_codex_app_server_completion_after_explicit_notify_does_not_duplicate_no
         {"task_description": "Open a pull request.", "context": {}},
     )
 
-    runner._notify_user(7, {"message": "The pull request is open."})
+    runner._notify_user(
+        7,
+        {
+            "notification_kind": "completion",
+            "message": "Implemented the change and all tests pass.",
+        },
+    )
     runner._on_notification({"method": "turn/completed", "params": {"turn": {"status": "completed"}}})
 
     assert [event["type"] for event in codex_app_server.EVENTS] == ["AmberNotifyUser", "CodexTaskCompleted"]
-    assert codex_app_server.EVENTS[0]["message"] == "The pull request is open."
+    assert codex_app_server.EVENTS[0]["message"] == "Implemented the change and all tests pass."
     assert "guardrail" not in codex_app_server.EVENTS[0]["context"]
 
 
-def test_codex_app_server_completion_forwards_assistant_text_after_notify() -> None:
+def test_codex_app_server_milestone_still_requires_one_completion_notification() -> None:
+    codex_app_server.TASKS.clear()
+    codex_app_server.EVENTS.clear()
+    task_id = "task_1"
+    codex_app_server.TASKS[task_id] = {
+        "status": "running",
+        "task_description": "Implement a parser.",
+        "context": {},
+        "notifications": [],
+    }
+    runner = codex_app_server.CodexTaskRunner(
+        task_id,
+        {"task_description": "Implement a parser.", "context": {}},
+    )
+
+    runner._notify_user(
+        7,
+        {
+            "notification_kind": "milestone",
+            "message": "The parser implementation is ready for validation.",
+        },
+    )
+    runner._on_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "item": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Implemented the parser and 12 tests pass."}],
+                }
+            },
+        }
+    )
+    runner._on_notification({"method": "turn/completed", "params": {"turn": {"status": "completed"}}})
+
+    notifications = [event for event in codex_app_server.EVENTS if event["type"] == "AmberNotifyUser"]
+    assert [event["notification_kind"] for event in notifications] == ["milestone", "completion"]
+    assert notifications[-1]["message"] == "Implemented the parser and 12 tests pass."
+
+
+def test_codex_app_server_completion_suppresses_assistant_text_after_terminal_notify() -> None:
     codex_app_server.TASKS.clear()
     codex_app_server.EVENTS.clear()
     task_id = "task_1"
@@ -787,7 +878,21 @@ def test_codex_app_server_completion_forwards_assistant_text_after_notify() -> N
         {"task_description": "Open a pull request.", "context": {}},
     )
 
-    runner._notify_user(7, {"message": "The pull request is open."})
+    runner._notify_user(
+        7,
+        {
+            "notification_kind": "completion",
+            "message": "Implemented the change and all tests pass.",
+        },
+    )
+    runner._report_pull_request(
+        8,
+        {
+            "event_type": "opened",
+            "pr_url": "https://github.com/acme/widgets/pull/12",
+            "repository": "acme/widgets",
+        },
+    )
     runner._on_notification(
         {
             "method": "item/completed",
@@ -804,11 +909,10 @@ def test_codex_app_server_completion_forwards_assistant_text_after_notify() -> N
 
     assert [event["type"] for event in codex_app_server.EVENTS] == [
         "AmberNotifyUser",
-        "AmberNotifyUser",
+        "AmberReportPullRequest",
         "CodexTaskCompleted",
     ]
-    assert codex_app_server.EVENTS[1]["message"] == "Additional final detail."
-    assert codex_app_server.EVENTS[1]["context"]["source"] == "captured_assistant_message"
+    assert codex_app_server.EVENTS[0]["message"] == "Implemented the change and all tests pass."
 
 
 def test_codex_app_server_dynamic_tool_emits_question_and_receives_output() -> None:
@@ -866,6 +970,56 @@ def test_codex_app_server_dynamic_tool_emits_question_and_receives_output() -> N
     assert fake_client.responses[0]["result"]["success"] is True
     assert "Only arithmetic expressions" in fake_client.responses[0]["result"]["contentItems"][0]["text"]
     assert codex_app_server.EVENTS[-1]["type"] == "CodexToolOutputReceived"
+
+    runner._on_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "item": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Implemented arithmetic parsing and tests pass."}],
+                }
+            },
+        }
+    )
+    runner._on_notification({"method": "turn/completed", "params": {"turn": {"status": "completed"}}})
+
+    assert [event["type"] for event in codex_app_server.EVENTS] == [
+        "AmberAskUserQuestion",
+        "CodexToolOutputReceived",
+        "AmberNotifyUser",
+        "CodexTaskCompleted",
+    ]
+    assert codex_app_server.EVENTS[-2]["notification_kind"] == "completion"
+
+
+def test_codex_app_server_rejects_untyped_notification() -> None:
+    codex_app_server.TASKS.clear()
+    codex_app_server.EVENTS.clear()
+    task_id = "task_1"
+    codex_app_server.TASKS[task_id] = {
+        "status": "running",
+        "task_description": "Implement a parser.",
+        "notifications": [],
+    }
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.responses: list[dict[str, Any]] = []
+
+        def respond(self, request_id: int, result: dict[str, Any] | None = None, error: dict[str, Any] | None = None) -> None:
+            self.responses.append({"request_id": request_id, "result": result, "error": error})
+
+    runner = codex_app_server.CodexTaskRunner(task_id, {"task_description": "Implement a parser."})
+    fake_client = FakeClient()
+    runner.client = fake_client
+
+    runner._notify_user(7, {"message": "Parser work is done."})
+
+    assert codex_app_server.EVENTS == []
+    assert fake_client.responses[0]["result"]["success"] is False
+    assert "notification_kind" in fake_client.responses[0]["result"]["contentItems"][0]["text"]
 
 
 def test_codex_app_server_dynamic_tool_reports_pull_request_event() -> None:

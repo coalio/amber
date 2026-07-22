@@ -27,6 +27,7 @@ class Settings(BaseModel):
 
     root_dir: Path
     release_dir: Path
+    release_version: str
     resources_dir: Path
     workspace_dir: Path
     mode: Literal["casual", "work"]
@@ -62,6 +63,7 @@ class Settings(BaseModel):
     ai_max_output_tokens: int
     ai_temperature: float
     ai_orchestration_prompt_path: Path
+    ai_notification_policy_prompt_path: Path
     ai_interruption_prompt_path: Path
     outbound_max_chunk_chars: int
     action_transport_max_retries: int
@@ -207,6 +209,17 @@ def release_dir() -> Path:
     return SOURCE_ROOT
 
 
+def release_version() -> str:
+    version_path = release_dir() / "VERSION"
+    try:
+        version = version_path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"Amber VERSION file is missing: {version_path}") from exc
+    if not re.fullmatch(r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)", version):
+        raise RuntimeError(f"Amber VERSION is not valid SemVer: {version!r}")
+    return version
+
+
 def resources_dir() -> Path:
     packaged_resources = release_dir() / "resources"
     if packaged_resources.exists():
@@ -279,6 +292,7 @@ def _get_settings_cached(workspace_key: str | None, config_key: str | None) -> S
     return Settings(
         root_dir=resolved_workspace,
         release_dir=release_dir(),
+        release_version=release_version(),
         resources_dir=resources_dir(),
         workspace_dir=resolved_workspace,
         mode=mode,  # type: ignore[arg-type]
@@ -318,6 +332,7 @@ def _get_settings_cached(workspace_key: str | None, config_key: str | None) -> S
         ai_max_output_tokens=int(_value(data, ("ai", "max_output_tokens"))),
         ai_temperature=float(_value(data, ("ai", "temperature"))),
         ai_orchestration_prompt_path=system_dir / "AI_ORCHESTRATION.md",
+        ai_notification_policy_prompt_path=system_dir / "AI_NOTIFICATION_POLICY.md",
         ai_interruption_prompt_path=prompt_dir / "AI_INTERRUPTION.md",
         outbound_max_chunk_chars=int(_value(data, ("outbound", "max_chunk_chars"))),
         action_transport_max_retries=int(_value(data, ("action", "transport_max_retries"))),

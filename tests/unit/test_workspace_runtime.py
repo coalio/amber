@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
 
 from src.ai.semantic.config import SemanticConfig
 from src.config.config import get_settings
@@ -38,6 +37,7 @@ def test_settings_load_workspace_toml_and_env_overrides(monkeypatch, tmp_path) -
     settings = get_settings("indiedreamers")
 
     assert settings.workspace_dir == workspace
+    assert settings.release_version == "0.3.0"
     assert settings.attention_scorer == "modernbert"
     assert settings.ai_model == "gpt-test"
     assert settings.codex_container_name == "amber-indiedreamers-codex"
@@ -58,7 +58,24 @@ def test_semantic_prompt_composes_release_system_before_workspace_prompt(monkeyp
 
     orchestration_index = prompt.index("Amber receives a visible context frame")
     workspace_index = prompt.index("You are the semantic decision layer for Amber in a work-focused Telegram context.")
+    notification_policy_index = prompt.index("# Codex Notification Policy")
     assert orchestration_index < workspace_index
+    assert workspace_index < notification_policy_index
+
+    get_settings.cache_clear()
+
+
+def test_release_notification_policy_overrides_stale_workspace_prompt(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("AMBER_HOME", str(tmp_path / ".amber"))
+    get_settings.cache_clear()
+
+    workspace = init_workspace("indiedreamers")
+    stale_instruction = "When codex_notification is present, Amber must always send a reply."
+    (workspace / "prompts" / "AI_SYSTEM_WORK.md").write_text(stale_instruction, encoding="utf-8")
+    prompt = SemanticConfig.from_settings(get_settings("indiedreamers")).system_prompt
+
+    assert prompt.index(stale_instruction) < prompt.index("# Codex Notification Policy")
+    assert "If Amber recently communicated the same concept in that chat, return `ignore`" in prompt
 
     get_settings.cache_clear()
 

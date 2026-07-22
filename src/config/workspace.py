@@ -76,17 +76,25 @@ def write_workspace_config(path: Path, data: dict[str, Any]) -> None:
 
 def render_toml(data: dict[str, Any]) -> str:
     lines: list[str] = []
-    scalars = {key: value for key, value in data.items() if not isinstance(value, dict)}
-    sections = {key: value for key, value in data.items() if isinstance(value, dict)}
-    for key, value in scalars.items():
-        lines.append(f"{key} = {_toml_value(value)}")
-    for section, values in sections.items():
-        if lines and lines[-1] != "":
-            lines.append("")
-        lines.append(f"[{section}]")
-        for key, value in values.items():
-            lines.append(f"{key} = {_toml_value(value)}")
+    _render_toml_table(lines, data, table_path=())
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _render_toml_table(lines: list[str], values: dict[str, Any], *, table_path: tuple[str, ...]) -> None:
+    # write each table's scalar values before its child tables
+    if table_path:
+        if lines:
+            lines.append("")
+        lines.append(f"[{'.'.join(table_path)}]")
+
+    for key, value in values.items():
+        if not isinstance(value, dict):
+            lines.append(f"{key} = {_toml_value(value)}")
+
+    # preserve nested config tables instead of serializing them as Python strings
+    for key, value in values.items():
+        if isinstance(value, dict):
+            _render_toml_table(lines, value, table_path=(*table_path, key))
 
 
 def doctor_workspace(workspace: str | Path, *, validate_external: bool = False, include_service: bool = False) -> list[DoctorCheck]:

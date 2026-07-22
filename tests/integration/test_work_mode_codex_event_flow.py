@@ -98,6 +98,7 @@ def test_codex_notification_with_requested_output_is_sent_without_rewrite(
                     app_server_id="codex-sandbox",
                     task_id="task_factorial",
                     notification_id="notify_factorial",
+                    notification_kind="completion",
                     message="script finished. output: 120",
                     task_description="write a python script that calculates factorial 5 and tell me what it outputs",
                     candidate_people=[
@@ -121,6 +122,64 @@ def test_codex_notification_with_requested_output_is_sent_without_rewrite(
     assert "120" in sent_text
     assert "send me" not in sent_text
     assert outbound[-1].payload.chat_id == 1001001001
+
+    app.scheduler.shutdown()
+
+
+@pytest.mark.integration
+def test_codex_notification_ignores_recent_concept_then_sends_new_milestone(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    fake_openai = FakeOpenAIClient(ContextAwareNotificationResponsesClient())
+    monkeypatch.setattr("src.providers.openai.provider.OpenAI", lambda api_key: fake_openai)
+    monkeypatch.setattr("src.runtime.build_codex_adapter", lambda settings: FakeCodexAdapter())
+
+    transport = RecordingTransport()
+    app = build_application(
+        settings=_test_settings(tmp_path),
+        attention_scorer=NeverCalledAttentionScorer(),
+        transport=transport,
+    )
+    prior_ack = _telegram_message("the repo is cloned and ready to work on", message_id=1439).payload.model_copy(
+        update={"sender": TelegramSenderPayload(id="amber-self", name="amber", is_self=True)}
+    )
+    app.message_archive.put(prior_ack)
+
+    def emit_notification(notification_id: str, notification_kind: str, message: str) -> None:
+        with emitter_context("receiver.codex"):
+            EventBus.emit(
+                CodexNotificationReceivedEvent(
+                    chat_id="codex:task_repo",
+                    payload=CodexNotificationPayload(
+                        app_server_id="codex-sandbox",
+                        task_id="task_repo",
+                        notification_id=notification_id,
+                        notification_kind=notification_kind,
+                        message=message,
+                        task_description="prepare the repository and validate dependencies",
+                        candidate_people=[
+                            CodexCandidatePersonPayload(
+                                sender_id="1001001001",
+                                chat_id=1001001001,
+                                display_name="Fixture User",
+                            )
+                        ],
+                        created_at=datetime(2026, 6, 1, 1, 16, 0, tzinfo=timezone.utc),
+                    ),
+                )
+            )
+
+    emit_notification("notify_duplicate", "completion", "The repository is cloned and ready to work on.")
+
+    assert transport.records == []
+
+    emit_notification("notify_audit", "milestone", "Dependency audit completed with no vulnerable packages.")
+    _wait_until(lambda: len(transport.records) == 1, timeout_seconds=3.0)
+
+    assert len(fake_openai.responses.calls) == 2
+    assert fake_openai.responses.calls[1]["previous_response_id"] == "resp_duplicate_notification"
+    assert "no vulnerable packages" in " ".join(transport.records[0].ordered_messages).lower()
 
     app.scheduler.shutdown()
 
@@ -215,6 +274,57 @@ class NotificationResponsesClient:
                     "referenced_memory_ids": [],
                     "confidence": 0.93,
                     "notes": ["codex notification includes requested output"],
+                }
+            ),
+        )
+
+
+class ContextAwareNotificationResponsesClient:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def create(self, **kwargs: Any) -> SimpleNamespace:
+        self.calls.append(kwargs)
+        _assert_strict_tool_definitions(kwargs.get("tools", []))
+        turn_context = json.loads(kwargs["input"][-1]["content"][0]["text"])
+        notification = turn_context["codex_notification"]
+        history = notification["candidate_conversations"][0]["recent_messages"]
+        assert history[-1]["content"] == "the repo is cloned and ready to work on"
+        assert history[-1]["is_self"] is True
+        if len(self.calls) == 1:
+            system_prompt = kwargs["input"][0]["content"][0]["text"]
+            assert system_prompt.rfind("# Codex Notification Policy") > system_prompt.find(
+                "You are the semantic decision layer for Amber in a work-focused Telegram context."
+            )
+            assert notification["notification_kind"] == "completion"
+            return SimpleNamespace(
+                id="resp_duplicate_notification",
+                output=[],
+                output_text=json.dumps(
+                    {
+                        "action": "ignore",
+                        "reply_to_message_id": None,
+                        "chat_id": 1001001001,
+                        "reply_text": None,
+                        "referenced_memory_ids": [],
+                        "confidence": 0.98,
+                        "notes": ["same concept was already acknowledged"],
+                    }
+                ),
+            )
+        assert notification["notification_kind"] == "milestone"
+        return SimpleNamespace(
+            id="resp_new_milestone",
+            output=[],
+            output_text=json.dumps(
+                {
+                    "action": "reply",
+                    "reply_to_message_id": None,
+                    "chat_id": 1001001001,
+                    "reply_text": "dependency audit is complete: no vulnerable packages found",
+                    "referenced_memory_ids": [],
+                    "confidence": 0.96,
+                    "notes": ["new user-relevant milestone"],
                 }
             ),
         )

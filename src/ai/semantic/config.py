@@ -50,14 +50,14 @@ class SemanticConfig:
             if tool_registry is not None
             else None
         )
-        system_prompt = "\n\n".join(
-            [
-                read_markdown(settings.ai_orchestration_prompt_path),
-                read_markdown(settings.ai_system_prompt_path),
-            ]
-        )
+        prompt_parts = [
+            read_markdown(settings.ai_orchestration_prompt_path),
+            read_markdown(settings.ai_system_prompt_path),
+        ]
         if tool_registry is not None:
-            system_prompt = "\n\n".join([system_prompt, tool_registry.prompt_summary()])
+            prompt_parts.append(tool_registry.prompt_summary())
+        prompt_parts.append(read_markdown(settings.ai_notification_policy_prompt_path))
+        system_prompt = "\n\n".join(prompt_parts)
         return cls(
             provider_name=settings.ai_provider,
             api_key=settings.ai_api_key,

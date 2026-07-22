@@ -1,6 +1,7 @@
 from src.adapters.codex.adapter import (
     CodexAdapter,
     CodexNotification,
+    CodexNotificationKind,
     CodexQuestion,
     CodexPullRequestEvent,
     CodexTask,
@@ -16,6 +17,7 @@ from src.adapters.codex.task_lifecycle import CodexTaskLifecycleHandler
 __all__ = [
     "CodexAdapter",
     "CodexNotification",
+    "CodexNotificationKind",
     "CodexQuestion",
     "CodexPullRequestEvent",
     "CodexTask",

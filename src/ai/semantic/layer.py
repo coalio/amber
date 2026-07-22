@@ -36,7 +36,7 @@ class ConsciousHarness:
                 context={
                     "response_required_reason": frame.response_required_reason,
                     "current_message": self._message_subject(frame.current_message),
-                    "recent_window": self._window_context(frame),
+                    "recent_window": self._window_context(frame, decision),
                 },
             )
         if decision.action != "reply":
@@ -51,7 +51,7 @@ class ConsciousHarness:
                 context={
                     "reply_preview": None,
                     "reply_length": 0,
-                    "recent_window": self._window_context(frame),
+                    "recent_window": self._window_context(frame, decision),
                 },
             )
         if len(reply_text) > self._config.max_reply_chars:
@@ -65,7 +65,7 @@ class ConsciousHarness:
                     "reply_preview": self._preview(reply_text),
                     "reply_length": len(reply_text),
                     "max_reply_chars": self._config.max_reply_chars,
-                    "recent_window": self._window_context(frame),
+                    "recent_window": self._window_context(frame, decision),
                 },
             )
 
@@ -85,13 +85,13 @@ class ConsciousHarness:
                     "reply_preview": self._preview(reply_text),
                     "reply_length": len(reply_text),
                     "offending_messages": [trigger_subject],
-                    "recent_window": self._window_context(frame),
+                    "recent_window": self._window_context(frame, decision),
                     "similarity_threshold": 0.92,
                 },
             )
 
         # reject near-copies of visible messages
-        visible_messages = self._visible_window_messages(frame)
+        visible_messages = self._visible_window_messages(frame, decision)
         offending_messages = [
             self._message_subject(message, similarity=similarity)
             for message in visible_messages
@@ -110,7 +110,7 @@ class ConsciousHarness:
                     "reply_preview": self._preview(reply_text),
                     "reply_length": len(reply_text),
                     "offending_messages": offending_messages,
-                    "recent_window": self._window_context(frame),
+                    "recent_window": self._window_context(frame, decision),
                     "similarity_threshold": 0.9,
                 },
             )
@@ -167,10 +167,35 @@ class ConsciousHarness:
             },
         )
 
-    def _window_context(self, frame: ContextFramePayload) -> list[dict[str, object]]:
-        return [self._message_subject(message) for message in self._visible_window_messages(frame)]
+    def _window_context(
+        self,
+        frame: ContextFramePayload,
+        decision: SemanticDecisionSchema | None = None,
+    ) -> list[dict[str, object]]:
+        return [self._message_subject(message) for message in self._visible_window_messages(frame, decision)]
 
-    def _visible_window_messages(self, frame: ContextFramePayload) -> list:
+    def _visible_window_messages(
+        self,
+        frame: ContextFramePayload,
+        decision: SemanticDecisionSchema | None = None,
+    ) -> list:
+        notification = frame.codex_notification
+        if notification is not None and notification.candidate_conversations:
+            selected = None
+            if decision is not None:
+                selected = next(
+                    (
+                        conversation
+                        for conversation in notification.candidate_conversations
+                        if conversation.sender_id == (decision.codex_target_sender_id or "")
+                        or str(conversation.chat_id) == str(decision.chat_id)
+                    ),
+                    None,
+                )
+            if selected is None and len(notification.candidate_conversations) == 1:
+                selected = notification.candidate_conversations[0]
+            if selected is not None:
+                return selected.recent_messages
         return frame.conversation_window_messages or frame.recent_messages
 
     def _message_subject(

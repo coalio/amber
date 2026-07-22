@@ -99,6 +99,7 @@ def doctor_workspace(workspace: str | Path, *, validate_external: bool = False, 
 
     required_files = [
         settings.ai_orchestration_prompt_path,
+        settings.ai_notification_policy_prompt_path,
         settings.codex_system_prompt_path,
         settings.ai_system_casual_prompt_path,
         settings.ai_system_work_prompt_path,

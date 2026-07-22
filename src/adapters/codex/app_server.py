@@ -37,7 +37,8 @@ CLARIFICATION_POLICY = {
     ],
     "style": "Ask one meaningful question at a time. Give Amber enough task context, but do not provide a fixed user-facing template.",
 }
-USER_FACING_EVENT_TYPES = {"AmberAskUserQuestion", "AmberNotifyUser"}
+NOTIFICATION_KINDS = frozenset({"milestone", "completion", "blocked", "failed"})
+TERMINAL_NOTIFICATION_KINDS = frozenset({"completion", "blocked", "failed"})
 ASSISTANT_TEXT_NOTIFICATION_METHODS = {"item/created", "item/updated", "item/completed", "turn/completed"}
 
 
@@ -101,13 +102,6 @@ def _append_event(payload: dict[str, Any]) -> dict[str, Any]:
     event["created_at"] = time.time()
     EVENTS.append(event)
     return event
-
-
-def _last_task_event_type(task_id: str) -> str:
-    for event in reversed(EVENTS):
-        if str(event.get("task_id") or "") == task_id:
-            return str(event.get("type") or "")
-    return ""
 
 
 def _events_after(after: int) -> list[dict[str, Any]]:
@@ -194,18 +188,23 @@ def _dynamic_tools() -> list[dict[str, Any]]:
             "namespace": "amber",
             "name": "AmberNotifyUser",
             "description": (
-                "Ask Amber to notify the user about progress or completion. This does not expect a response. "
+                "Ask Amber to consider notifying the user about a meaningful milestone, completion, blocker, or failure. "
+                "This does not expect a response. Do not report routine incremental progress. "
                 "If the user requested command output, script output, generated values, file paths, PR URLs, "
                 "or other concrete results, include the exact result in the message. Do not merely say it was captured. "
-                "Before ending a turn, use this tool for the final user-facing result unless you are using "
-                "AmberAskUserQuestion to ask a material clarification."
+                "A completion message must include both what was implemented and the validated result."
             ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
+                    "notification_kind": {
+                        "type": "string",
+                        "enum": sorted(NOTIFICATION_KINDS),
+                        "description": "The user-relevant lifecycle meaning of this notification.",
+                    },
                     "message": {
                         "type": "string",
-                        "description": "The progress or completion note Amber should send in her own voice.",
+                        "description": "The milestone or outcome Amber should evaluate and phrase in her own voice.",
                     },
                     "context": {
                         "type": "object",
@@ -213,7 +212,7 @@ def _dynamic_tools() -> list[dict[str, Any]]:
                         "additionalProperties": True,
                     },
                 },
-                "required": ["message"],
+                "required": ["notification_kind", "message"],
                 "additionalProperties": False,
             },
         },
@@ -400,6 +399,7 @@ class CodexTaskRunner:
         self.thread_id: str | None = None
         self.turn_id: str | None = None
         self._last_assistant_message = ""
+        self._terminal_user_event_recorded = False
         self._done = threading.Event()
 
     def start(self) -> None:
@@ -410,6 +410,7 @@ class CodexTaskRunner:
         if pending is None:
             return False
         self._last_assistant_message = ""
+        self._terminal_user_event_recorded = False
         if pending.response_kind == "request_user_input":
             pending.client.respond(pending.request_id, self._user_input_response(pending.questions, output))
         else:
@@ -447,7 +448,7 @@ class CodexTaskRunner:
                     "clientInfo": {
                         "name": "amber",
                         "title": "Amber",
-                        "version": "0.2.0",
+                        "version": str(self.payload.get("release_version") or "development"),
                     },
                     "capabilities": {"experimentalApi": True},
                 },
@@ -642,6 +643,7 @@ class CodexTaskRunner:
         if method == "turn/started":
             turn = params.get("turn") if isinstance(params.get("turn"), dict) else {}
             self.turn_id = str(turn.get("id") or self.turn_id or "")
+            self._terminal_user_event_recorded = False
             with LOCK:
                 TASKS[self.task_id]["status"] = "running"
                 TASKS[self.task_id]["turn_id"] = self.turn_id
@@ -679,15 +681,15 @@ class CodexTaskRunner:
         task = TASKS.get(self.task_id)
         if task is None:
             return
-        assistant_message = self._last_assistant_message.strip()
-        if _last_task_event_type(self.task_id) in USER_FACING_EVENT_TYPES and not assistant_message:
+        if self._terminal_user_event_recorded:
             return
-        notification_id = _next_id("amber_notify")
+        assistant_message = self._last_assistant_message.strip()
         source = "captured_assistant_message" if assistant_message else "missing_terminal_tool"
         message = assistant_message or self._terminal_guard_message(
             status=status,
             exit_code=exit_code,
         )
+        notification_kind = "completion" if status in {"completed", "succeeded"} else "failed"
         context: dict[str, Any] = {
             "guardrail": "terminal_user_facing_event",
             "reason": reason,
@@ -696,40 +698,18 @@ class CodexTaskRunner:
         }
         if exit_code is not None:
             context["exit_code"] = exit_code
-        task.setdefault("notifications", []).append(
-            {
-                "notification_id": notification_id,
-                "message": message,
-                "context": context,
-            }
-        )
-        _append_event(
-            {
-                "type": "AmberNotifyUser",
-                "app_server_id": APP_SERVER_ID,
-                "task_id": self.task_id,
-                "notification_id": notification_id,
-                "message": message,
-                "task_description": str(self.payload.get("task_description") or task.get("task_description") or ""),
-                "context": context,
-            }
+        self._append_user_notification(
+            message=message,
+            notification_kind=notification_kind,
+            context=context,
         )
 
     def _terminal_guard_message(self, *, status: str, exit_code: int | None = None) -> str:
         if status in {"completed", "succeeded"}:
-            return (
-                "Codex finished without calling AmberNotifyUser or AmberAskUserQuestion. "
-                "No final assistant output was available to forward."
-            )
+            return "The task completed without a detailed result to report."
         if exit_code is not None:
-            return (
-                "Codex exited without calling AmberNotifyUser or AmberAskUserQuestion. "
-                f"Status: {status}. Exit code: {exit_code}."
-            )
-        return (
-            "Codex finished without calling AmberNotifyUser or AmberAskUserQuestion. "
-            f"Status: {status}."
-        )
+            return f"The task stopped before completion. Status: {status}. Exit code: {exit_code}."
+        return f"The task stopped before completion. Status: {status}."
 
     def _on_request(self, message: dict[str, Any]) -> None:
         method = str(message.get("method") or "")
@@ -800,6 +780,7 @@ class CodexTaskRunner:
         if self.client is None:
             return
         self._last_assistant_message = ""
+        self._terminal_user_event_recorded = True
         self.pending_tool_calls[tool_call_id] = PendingToolCall(
             request_id=request_id,
             task_id=self.task_id,
@@ -834,26 +815,69 @@ class CodexTaskRunner:
             if self.client is not None:
                 self.client.respond(request_id, _content_response("message is required", False))
             return
+        notification_kind = str(arguments.get("notification_kind") or "").strip().lower()
+        if notification_kind not in NOTIFICATION_KINDS:
+            if self.client is not None:
+                self.client.respond(
+                    request_id,
+                    _content_response(f"notification_kind must be one of: {', '.join(sorted(NOTIFICATION_KINDS))}", False),
+                )
+            return
         context = arguments.get("context") if isinstance(arguments.get("context"), dict) else {}
+        notification = self._append_user_notification(
+            message=message,
+            notification_kind=notification_kind,
+            context=context,
+            clear_assistant_message=True,
+        )
+        if self.client is not None:
+            self.client.respond(
+                request_id,
+                _content_response({"notified": True, "notification_id": notification["notification_id"]}, True),
+            )
+
+    def _append_user_notification(
+        self,
+        *,
+        message: str,
+        notification_kind: str,
+        context: dict[str, Any],
+        clear_assistant_message: bool = False,
+    ) -> dict[str, Any]:
         notification_id = _next_id("amber_notify")
-        self._last_assistant_message = ""
+        notification = {
+            "notification_id": notification_id,
+            "notification_kind": notification_kind,
+            "message": message,
+            "context": context,
+        }
+
+        # record terminal intent independently of later app-server events or assistant text
+        if clear_assistant_message:
+            self._last_assistant_message = ""
+        if notification_kind in TERMINAL_NOTIFICATION_KINDS:
+            self._terminal_user_event_recorded = True
+
+        # keep storage and the pollable event stream on one notification path
         with LOCK:
             task = TASKS.get(self.task_id)
             if task is not None:
-                task.setdefault("notifications", []).append({"notification_id": notification_id, "message": message})
+                task.setdefault("notifications", []).append(notification)
             _append_event(
                 {
                     "type": "AmberNotifyUser",
                     "app_server_id": APP_SERVER_ID,
                     "task_id": self.task_id,
                     "notification_id": notification_id,
+                    "notification_kind": notification_kind,
                     "message": message,
-                    "task_description": str(self.payload.get("task_description") or ""),
+                    "task_description": str(
+                        self.payload.get("task_description") or (task or {}).get("task_description") or ""
+                    ),
                     "context": context,
                 }
             )
-        if self.client is not None:
-            self.client.respond(request_id, _content_response({"notified": True, "notification_id": notification_id}, True))
+        return notification
 
     def _report_pull_request(self, request_id: int, arguments: dict[str, Any]) -> None:
         event_type = str(arguments.get("event_type") or "").strip()
@@ -949,16 +973,10 @@ class CodexTaskRunner:
             if task is not None:
                 task["status"] = "failed"
                 task["error"] = message
-            _append_event(
-                {
-                    "type": "AmberNotifyUser",
-                    "app_server_id": APP_SERVER_ID,
-                    "task_id": self.task_id,
-                    "notification_id": _next_id("amber_notify"),
-                    "message": f"Codex task failed before completion: {message}",
-                    "task_description": str(self.payload.get("task_description") or ""),
-                    "context": {"error": message},
-                }
+            self._append_user_notification(
+                message=f"The task failed before completion: {message}",
+                notification_kind="failed",
+                context={"error": message},
             )
         self._done.set()
 
@@ -1090,28 +1108,29 @@ class Handler(BaseHTTPRequestHandler):
         if not message:
             _json_response(self, 400, {"error": "message is required"})
             return
+        notification_kind = str(payload.get("notification_kind") or "").strip().lower()
+        if notification_kind not in NOTIFICATION_KINDS:
+            _json_response(
+                self,
+                400,
+                {"error": f"notification_kind must be one of: {', '.join(sorted(NOTIFICATION_KINDS))}"},
+            )
+            return
         with LOCK:
             task = TASKS.get(task_id)
             if task is None:
                 _json_response(self, 404, {"error": "unknown_task"})
                 return
-            notification = {
-                "notification_id": _next_id("amber_notify"),
-                "message": message,
-                "context": payload.get("context") if isinstance(payload.get("context"), dict) else {},
-            }
-            task["notifications"].append(notification)
-            _append_event(
-                {
-                    "type": "AmberNotifyUser",
-                    "app_server_id": APP_SERVER_ID,
-                    "task_id": task_id,
-                    "notification_id": notification["notification_id"],
-                    "message": message,
-                    "task_description": str(task.get("task_description") or ""),
-                    "context": notification["context"],
-                }
-            )
+            runner = RUNNERS.get(task_id)
+            if runner is None:
+                _json_response(self, 409, {"error": "task_runner_unavailable"})
+                return
+        notification = runner._append_user_notification(
+            message=message,
+            notification_kind=notification_kind,
+            context=payload.get("context") if isinstance(payload.get("context"), dict) else {},
+            clear_assistant_message=True,
+        )
         _json_response(
             self,
             200,

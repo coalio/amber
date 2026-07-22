@@ -48,6 +48,16 @@ class MessageArchive:
                 return None
             return bucket[-1].message_id
 
+    def recent_messages(self, chat_id: int | str, *, limit: int) -> list[TelegramMessagePayload]:
+        if limit <= 0:
+            return []
+        chat_key = str(chat_id)
+        with self._lock:
+            bucket = self._messages_by_chat.get(chat_key)
+            if not bucket:
+                return []
+            return list(bucket)[-limit:]
+
     def recent_segment_for_sender(
         self,
         chat_id: int | str,

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.events.base import BaseEvent
+
+
+CodexNotificationKind = Literal["milestone", "completion", "blocked", "failed"]
 
 
 class CodexCandidatePersonPayload(BaseModel):
@@ -43,6 +46,7 @@ class CodexNotificationPayload(BaseModel):
     app_server_id: str
     task_id: str
     notification_id: str
+    notification_kind: CodexNotificationKind
     message: str
     task_description: str
     context: dict[str, Any] = Field(default_factory=dict)

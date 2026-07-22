@@ -8,6 +8,7 @@ from src.attention.memory.store import MemoryStore
 from src.context.config import ContextConfig
 from src.context.pipeline import ContextLayer
 from src.context.session.store import ConversationSession
+from src.events.codex import CodexCandidatePersonPayload
 from src.events.context import ContextFrameMessagePayload
 from src.events.receiver import (
     TelegramAttachmentPayload,
@@ -103,6 +104,44 @@ def test_context_frame_includes_conversation_window_and_engages_window_participa
     assert set(frame.payload.engaged_user_ids) == {"amber-self", "user-a", "user-b", "user-c"}
 
 
+def test_codex_candidate_histories_are_recent_and_isolated_by_chat(tmp_path) -> None:
+    archive = MessageArchive.instance()
+    context_layer = ContextLayer(
+        ContextConfig(
+            debounce_seconds=0.0,
+            idle_timeout_seconds=60.0,
+            competing_chat_timeout_seconds=15.0,
+            recent_message_budget=2,
+            max_compacted_facts=6,
+            disable_sleep_state=True,
+        ),
+        GlobalStateStore(tmp_path / "runtime_state.json", "America/Managua"),
+        RuntimeScheduler.instance(),
+        archive,
+        MemoryStore(tmp_path / "memories"),
+        "America/Managua",
+    )
+    archive.put(_telegram_message(410, "user-a", "Fixture User", "old update", chat_id=1001001001))
+    archive.put(_telegram_message(411, "amber-self", "amber", "first acknowledgement", is_self=True, chat_id=1001001001))
+    archive.put(_telegram_message(412, "amber-self", "amber", "latest acknowledgement", is_self=True, chat_id=1001001001))
+    archive.put(_telegram_message(413, "user-b", "Fixture Peer", "separate chat", chat_id=1001001002))
+
+    conversations = context_layer._codex_candidate_conversations(
+        [
+            CodexCandidatePersonPayload(sender_id="user-a", chat_id=1001001001, display_name="Fixture User"),
+            CodexCandidatePersonPayload(sender_id="user-b", chat_id=1001001002, display_name="Fixture Peer"),
+        ]
+    )
+
+    assert [message.content for message in conversations[0].recent_messages] == [
+        "first acknowledgement",
+        "latest acknowledgement",
+    ]
+    assert all(message.is_self for message in conversations[0].recent_messages)
+    assert [message.content for message in conversations[1].recent_messages] == ["separate chat"]
+    assert all(message.source == "codex_candidate_history" for item in conversations for message in item.recent_messages)
+
+
 def _telegram_message(
     message_id: int,
     sender_id: str,
@@ -114,10 +153,11 @@ def _telegram_message(
     reply_to_sender_id: str | None = None,
     reply_to_sender_name: str | None = None,
     reply_to_content: str | None = None,
+    chat_id: int = 1001001001,
 ) -> TelegramMessagePayload:
     return TelegramMessagePayload(
         message_id=message_id,
-        chat_id=1001001001,
+        chat_id=chat_id,
         sender=TelegramSenderPayload(id=sender_id, name=sender_name, is_self=is_self),
         timestamp=datetime(2026, 4, 21, 3, 50 + (message_id - 410), 0, tzinfo=timezone.utc),
         content=content,
@@ -128,5 +168,5 @@ def _telegram_message(
         reply_to_raw_text=reply_to_content,
         mentions=[],
         attachment=TelegramAttachmentPayload(),
-        transport=TelegramTransportPayload(peer_id=1001001001, raw_chat_id=1001001001, raw_message_id=message_id),
+        transport=TelegramTransportPayload(peer_id=chat_id, raw_chat_id=chat_id, raw_message_id=message_id),
     )

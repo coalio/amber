@@ -4,7 +4,14 @@ import subprocess
 
 from src.ai.semantic.config import SemanticConfig
 from src.config.config import get_settings
-from src.config.workspace import doctor_workspace, init_workspace, install_user_service, render_user_service
+from src.config.workspace import (
+    doctor_workspace,
+    init_workspace,
+    install_user_service,
+    load_workspace_config,
+    render_user_service,
+    write_workspace_config,
+)
 
 
 def test_workspace_init_creates_fixed_layout(monkeypatch, tmp_path) -> None:
@@ -45,6 +52,29 @@ def test_settings_load_workspace_toml_and_env_overrides(monkeypatch, tmp_path) -
     assert settings.telegram_session_path == workspace / "telegram" / "telegram.session"
     assert settings.memories_dir == workspace / "memories"
     assert settings.codex_workdir == workspace / "codex" / "work"
+
+    get_settings.cache_clear()
+
+
+def test_saving_workspace_config_preserves_nested_linear_status_defaults(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("AMBER_HOME", str(tmp_path / ".amber"))
+    get_settings.cache_clear()
+
+    workspace = init_workspace("indiedreamers")
+    config_path = workspace / "config.toml"
+    data = load_workspace_config(config_path)
+    data["linear"]["api_key"] = "test-linear-key"
+    write_workspace_config(config_path, data)
+
+    settings = get_settings("indiedreamers")
+
+    assert settings.linear_project_statuses == {
+        "planned": ("Planned",),
+        "started": ("Started",),
+        "completed": ("Completed",),
+        "canceled": ("Canceled",),
+    }
+    assert '[linear.project.statuses]' in config_path.read_text(encoding="utf-8")
 
     get_settings.cache_clear()
 

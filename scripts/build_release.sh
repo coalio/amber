@@ -10,6 +10,7 @@ DEFAULT_ASSET_NAME="amber-linux-x86_64.tar.gz"
 FULL_ASSET_NAME="${AMBER_FULL_ASSET_NAME:-amber-linux-x86_64-full.tar.gz}"
 SPLIT_SIZE="${AMBER_SPLIT_SIZE:-1900M}"
 BUILD_ML="${AMBER_BUILD_ML:-}"
+VERSION="$(tr -d '[:space:]' < "$ROOT/VERSION")"
 
 flag_enabled() {
   case "${1,,}" in
@@ -21,6 +22,22 @@ flag_enabled() {
       ;;
   esac
 }
+
+# reject malformed or mismatched release refs before producing publishable assets
+if [[ ! "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+  echo "VERSION must contain a valid SemVer release, got: $VERSION" >&2
+  exit 1
+fi
+CURRENT_BRANCH="$(git -C "$ROOT" branch --show-current)"
+EXACT_TAG="$(git -C "$ROOT" describe --tags --exact-match 2>/dev/null || true)"
+if [[ "$CURRENT_BRANCH" == release/* && "$CURRENT_BRANCH" != "release/$VERSION" ]]; then
+  echo "Release branch $CURRENT_BRANCH does not match VERSION $VERSION" >&2
+  exit 1
+fi
+if [[ -n "$EXACT_TAG" && "$EXACT_TAG" != "v$VERSION" ]]; then
+  echo "Release tag $EXACT_TAG does not match VERSION $VERSION" >&2
+  exit 1
+fi
 
 if [[ -n "${AMBER_ASSET_NAME:-}" ]]; then
   ASSET_NAME="$AMBER_ASSET_NAME"
@@ -82,6 +99,7 @@ STAGING="$DIST_DIR/release/$APP_NAME"
 mkdir -p "$STAGING/resources/system" "$STAGING/resources/prompts" "$STAGING/resources/codex" "$STAGING/resources/codex-skills/CodexRules"
 
 cp -a "$DIST_DIR/$APP_NAME/." "$STAGING/"
+cp "$ROOT/VERSION" "$STAGING/VERSION"
 cp "$ROOT/src/config/config.default.toml" "$STAGING/resources/config.default.toml"
 cp "$ROOT/src/adapters/codex/app_server.py" "$STAGING/resources/codex/app_server.py"
 cp "$ROOT/src/config/system/"*.md "$STAGING/resources/system/"

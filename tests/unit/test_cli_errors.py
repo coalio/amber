@@ -26,6 +26,23 @@ def test_main_prints_runtime_errors_without_traceback(monkeypatch, capsys) -> No
     assert "Traceback" not in captured.err
 
 
+def test_version_prints_packaged_semantic_version(monkeypatch, capsys, tmp_path: Path) -> None:
+    settings = SimpleNamespace(
+        release_version="0.3.0",
+        release_dir=tmp_path / "releases" / "v0.3.0",
+        resources_dir=tmp_path / "releases" / "v0.3.0" / "resources",
+    )
+    monkeypatch.setattr("src.config.config.get_settings", lambda: settings)
+
+    assert cli._version() == 0
+
+    assert capsys.readouterr().out.splitlines() == [
+        "amber version: 0.3.0",
+        f"release dir: {settings.release_dir}",
+        f"resources dir: {settings.resources_dir}",
+    ]
+
+
 def test_run_builds_telegram_runtime_inside_event_loop(monkeypatch) -> None:
     events: list[str] = []
 

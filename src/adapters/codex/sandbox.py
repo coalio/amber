@@ -37,6 +37,7 @@ def build_codex_adapter(
         rules_skill_path=settings.codex_rules_skill_path,
         command_runner=command_runner,
         progress_callback=progress_callback,
+        release_version=settings.release_version,
     )
 
 

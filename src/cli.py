@@ -248,7 +248,7 @@ def _version() -> int:
     from src.config.config import get_settings
 
     settings = get_settings()
-    print(f"amber release: {settings.release_dir.name}")
+    print(f"amber version: {settings.release_version}")
     print(f"release dir: {settings.release_dir}")
     print(f"resources dir: {settings.resources_dir}")
     return 0

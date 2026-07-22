@@ -56,7 +56,26 @@ pytest tests/unit -q
 
 Integration tests are slower and may require live OpenAI, Telegram, Linear, GitHub, Codex, and Podman access. Prefer the smallest focused test that covers the change.
 
+## Commits And Branches
+
+Develop in a worktree on `feature/<slug>`, `fix/<slug>`, or `release/X.Y.Z`; do not work directly on `master`. All changes reach `master` through a pull request.
+
+Use scoped Conventional Commits:
+
+```text
+fix(codex): prevent duplicate task notifications
+
+Description: suppress the completion fallback after an explicit terminal notification.
+Breaking: no
+```
+
+Use `!` plus a `BREAKING CHANGE:` footer when users must migrate an API, CLI, configuration, storage, packaging, or installation contract. The complete repository policy is in [AGENTS.md](./AGENTS.md).
+
+Choose release versions from commits since the latest tag: `fix`/`perf` increments patch, `feat` increments minor, and a breaking change increments major. Non-functional commit types alone do not require a version bump. Record the version in `VERSION` without the tag's `v` prefix.
+
 ## Release Artifacts
+
+Prepare releases on `release/X.Y.Z`. After its reviewed pull request is rebase-merged, create an annotated `vX.Y.Z` tag on the resulting `master` commit and build from that exact tag. Release branches are retained; published tags are immutable.
 
 Every GitHub release must include both installer-selectable Linux packages and their SHA256 files:
 
@@ -83,6 +102,8 @@ AMBER_BUILD_ML=1 scripts/build_release.sh
 ```
 
 The full build writes `dist/amber-linux-x86_64-full.tar.gz`, `dist/amber-linux-x86_64-full.tar.gz.sha256`, and split files named `dist/amber-linux-x86_64-full.tar.gz.part-*` if the archive crosses the split threshold.
+
+Before publishing, verify both checksums and confirm the packaged `VERSION` matches the branch and tag. Publish both variants and all required split parts together.
 
 ## Installer Overrides
 

@@ -77,14 +77,12 @@ Choose release versions from commits since the latest tag: `fix`/`perf` incremen
 
 Prepare releases on `release/X.Y.Z`. After its reviewed pull request is rebase-merged, create an annotated `vX.Y.Z` tag on the resulting `master` commit and build from that exact tag. Release branches are retained; published tags are immutable.
 
-Every GitHub release must include both installer-selectable Linux packages and their SHA256 files:
+Every GitHub release includes the small Linux package and its SHA256 file:
 
 - Standard package: `amber-linux-x86_64.tar.gz`
 - Standard checksum: `amber-linux-x86_64.tar.gz.sha256`
-- Full local-ML package: `amber-linux-x86_64-full.tar.gz`
-- Full local-ML checksum: `amber-linux-x86_64-full.tar.gz.sha256`
 
-Do not publish a release with only one package variant. The installer offers both the standard and full local-ML choices, so a missing full package breaks ModernBERT installs. If an archive exceeds GitHub's upload size limit and the build script splits it, upload the split files with the generated package-name prefix, such as `amber-linux-x86_64.tar.gz.part-*` or `amber-linux-x86_64-full.tar.gz.part-*`, plus the matching `.sha256` file.
+The Standard and Full installer choices consume this same package. Full then downloads CPU-only PyTorch from the official PyTorch wheel index, Transformers from PyPI, and the pinned ModernBERT checkpoint from Hugging Face into Amber-managed directories. Do not build or upload a second archive containing third-party ML dependencies. If the Amber archive exceeds GitHub's upload size limit and the build script splits it, upload the split files with the `amber-linux-x86_64.tar.gz.part-*` prefix plus the matching `.sha256` file.
 
 Build the standard Linux release asset with:
 
@@ -95,15 +93,9 @@ scripts/build_release.sh
 
 The standard build writes `dist/amber-linux-x86_64.tar.gz` and a SHA256 file. If the archive is larger than the configured split size, the script also creates `dist/amber-linux-x86_64.tar.gz.part-*`.
 
-Default release builds exclude Torch, Transformers, CUDA/NVIDIA libraries, and related scientific packages. Build the separate full local-ML package with:
+Release builds always exclude Torch, Transformers, CUDA/NVIDIA libraries, and related scientific packages. `AMBER_BUILD_ML=1` is rejected so those third-party dependencies cannot accidentally become a GitHub release artifact.
 
-```bash
-AMBER_BUILD_ML=1 scripts/build_release.sh
-```
-
-The full build writes `dist/amber-linux-x86_64-full.tar.gz`, `dist/amber-linux-x86_64-full.tar.gz.sha256`, and split files named `dist/amber-linux-x86_64-full.tar.gz.part-*` if the archive crosses the split threshold.
-
-Before publishing, verify both checksums and confirm the packaged `VERSION` matches the branch and tag. Publish both variants and all required split parts together.
+Before publishing, verify the checksum and confirm the packaged `VERSION` matches the branch and tag. Publish the archive, checksum, and any required split parts together.
 
 ## Installer Overrides
 
@@ -115,8 +107,9 @@ The installer defaults to the latest `coalio/amber` GitHub release. Maintainers 
 - `AMBER_RELEASE_URL` installs from a specific archive URL.
 - `AMBER_RELEASE_TAG` controls the release directory name for manual installs.
 - `AMBER_ASSET_NAME` changes the expected release asset name.
-- `AMBER_INSTALL_VARIANT=standard|full` selects the default or full release asset.
-- `AMBER_FULL_ASSET_NAME` changes the expected full release asset name.
+- `AMBER_INSTALL_VARIANT=standard|full` selects heuristic-only setup or installer-managed ModernBERT setup. Both use the standard release asset.
+- `AMBER_ML_PYTHON` selects a supported Python executable for the Full optional environment.
+- `AMBER_PYTORCH_CPU_INDEX_URL` and `AMBER_PYPI_INDEX_URL` override dependency indexes for controlled mirrors or installer tests.
 
 Example local archive install:
 

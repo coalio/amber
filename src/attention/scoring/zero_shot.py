@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from collections import OrderedDict
-from typing import Any
+from typing import Any, Protocol
 
 from src.attention.constants import (
     ATTENTION_LABEL_HYPOTHESES,
@@ -12,6 +12,63 @@ from src.attention.constants import (
     POSITIVE_ATTENTION_LABELS,
 )
 from src.attention.scoring.types import AttentionModelClassification
+
+
+class AttentionLabelInference(Protocol):
+    def score_labels(self, text: str, hypotheses: dict[str, str], *, max_length: int) -> dict[str, float]: ...
+
+
+class LocalModernBertInference:
+    """In-process ModernBERT inference for source development."""
+
+    def __init__(self, model_name: str, model_revision: str, *, device: str | None = None) -> None:
+        try:
+            import torch
+            from transformers import AutoModelForSequenceClassification, AutoTokenizer
+        except ImportError as exc:
+            raise RuntimeError(
+                "ModernBERT Attention scoring requires `torch` and `transformers`. "
+                "Install optional ML requirements with `pip install -r requirements-ml.txt`."
+            ) from exc
+
+        # use the configured accelerator only for source installs that own their Python environment
+        resolved_device = device or os.getenv("AMBER_ATTENTION_DEVICE")
+        if not resolved_device:
+            resolved_device = "cuda" if torch.cuda.is_available() else "cpu"
+        tokenizer = AutoTokenizer.from_pretrained(model_name, revision=model_revision)
+        model = AutoModelForSequenceClassification.from_pretrained(model_name, revision=model_revision)
+        model.to(resolved_device)
+        model.eval()
+
+        self._torch = torch
+        self._tokenizer = tokenizer
+        self._model = model
+        self._entailment_index = self._resolve_entailment_index()
+
+    def score_labels(self, text: str, hypotheses: dict[str, str], *, max_length: int) -> dict[str, float]:
+        labels = list(hypotheses)
+        inputs = self._tokenizer(
+            [text] * len(labels),
+            [hypotheses[label] for label in labels],
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=max_length,
+        )
+        device = next(self._model.parameters()).device
+        inputs = {key: value.to(device) for key, value in inputs.items()}
+        with self._torch.inference_mode():
+            logits = self._model(**inputs).logits
+            probabilities = self._torch.softmax(logits.float(), dim=-1)[:, self._entailment_index]
+        values = probabilities.detach().cpu().tolist()
+        return {label: round(float(value), 4) for label, value in zip(labels, values)}
+
+    def _resolve_entailment_index(self) -> int:
+        label2id = getattr(self._model.config, "label2id", {}) or {}
+        for label, index in label2id.items():
+            if str(label).lower() == "entailment":
+                return int(index)
+        return 0
 
 
 class AttentionPolicyScorer:
@@ -30,14 +87,18 @@ class AttentionPolicyScorer:
         max_length: int = 512,
         cache_size: int = 1024,
         warm: bool = True,
+        inference: AttentionLabelInference | None = None,
     ) -> None:
         self.model_name = model_name or os.getenv("AMBER_ATTENTION_MODEL") or DEFAULT_ATTENTION_MODEL
         self.model_revision = revision or os.getenv("AMBER_ATTENTION_MODEL_REVISION") or DEFAULT_ATTENTION_MODEL_REVISION
         self.max_length = max_length
         self._cache_size = cache_size
         self._cache: OrderedDict[str, AttentionModelClassification] = OrderedDict()
-        self._torch, self._tokenizer, self._model = self._load_model(device)
-        self._entailment_index = self._resolve_entailment_index()
+        self._inference = inference or LocalModernBertInference(
+            self.model_name,
+            self.model_revision,
+            device=device,
+        )
         if warm:
             self.classify_text("hello")
 
@@ -69,49 +130,12 @@ class AttentionPolicyScorer:
             self._cache.popitem(last=False)
         return classification
 
-    def _load_model(self, requested_device: str | None):
-        try:
-            import torch
-            from transformers import AutoModelForSequenceClassification, AutoTokenizer
-        except ImportError as exc:
-            raise RuntimeError(
-                "ModernBERT Attention scoring requires `torch` and `transformers`. "
-                "Install optional ML requirements with `pip install -r requirements-ml.txt`."
-            ) from exc
-        device = requested_device or os.getenv("AMBER_ATTENTION_DEVICE")
-        if not device:
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-        tokenizer = AutoTokenizer.from_pretrained(self.model_name, revision=self.model_revision)
-        model = AutoModelForSequenceClassification.from_pretrained(self.model_name, revision=self.model_revision)
-        model.to(device)
-        model.eval()
-        return torch, tokenizer, model
-
-    def _resolve_entailment_index(self) -> int:
-        label2id = getattr(self._model.config, "label2id", {}) or {}
-        for label, index in label2id.items():
-            if str(label).lower() == "entailment":
-                return int(index)
-        return 0
-
     def _score_labels(self, text: str) -> dict[str, float]:
-        labels = list(ATTENTION_LABEL_HYPOTHESES)
-        hypotheses = [ATTENTION_LABEL_HYPOTHESES[label] for label in labels]
-        inputs = self._tokenizer(
-            [text] * len(hypotheses),
-            hypotheses,
-            return_tensors="pt",
-            padding=True,
-            truncation=True,
+        return self._inference.score_labels(
+            text,
+            ATTENTION_LABEL_HYPOTHESES,
             max_length=self.max_length,
         )
-        device = next(self._model.parameters()).device
-        inputs = {key: value.to(device) for key, value in inputs.items()}
-        with self._torch.inference_mode():
-            logits = self._model(**inputs).logits
-            probabilities = self._torch.softmax(logits.float(), dim=-1)[:, self._entailment_index]
-        values = probabilities.detach().cpu().tolist()
-        return {label: round(float(value), 4) for label, value in zip(labels, values)}
 
     def _attention_score(self, labels: dict[str, float]) -> float:
         positive = max(labels[label] for label in POSITIVE_ATTENTION_LABELS)

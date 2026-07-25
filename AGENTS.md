@@ -29,8 +29,8 @@ These rules apply to the entire repository.
 
 ## Release Gate
 
-- Prepare the version and release notes on `release/X.Y.Z`, validate the full unit suite, and build both package variants from the exact release commit.
+- Prepare the version and release notes on `release/X.Y.Z`, validate the full unit suite, and build the release package from the exact release commit.
 - Merge the reviewed release pull request before creating the tag. Tag the resulting `master` commit with an annotated `vX.Y.Z` tag.
-- Every GitHub release must include the standard and full local-ML archives, each checksum, and any generated split parts.
+- Every GitHub release must include the standard archive, its checksum, and any generated split parts. Never upload a second archive containing optional third-party ML dependencies; Full installer mode fetches them from their maintainers.
 - Verify archive checksums, packaged `VERSION`, installer behavior, workspace doctor, service health, and the release-specific regression before announcing completion.
 - Do not include credentials, personal identifiers, machine-specific paths, local state, or ignored development artifacts in commits or releases.

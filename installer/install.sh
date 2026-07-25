@@ -4,10 +4,16 @@ set -euo pipefail
 REPO="${AMBER_REPO:-coalio/amber}"
 AMBER_HOME="${AMBER_HOME:-$HOME/.amber}"
 DEFAULT_ASSET_NAME="amber-linux-x86_64.tar.gz"
-FULL_ASSET_NAME="${AMBER_FULL_ASSET_NAME:-amber-linux-x86_64-full.tar.gz}"
 ASSET_NAME_OVERRIDE="${AMBER_ASSET_NAME:-}"
 ASSET_NAME="${ASSET_NAME_OVERRIDE:-$DEFAULT_ASSET_NAME}"
 INSTALL_VARIANT="${AMBER_INSTALL_VARIANT:-}"
+INSTALLED_RELEASE_DIR=""
+ML_RUNTIME_DIR="$AMBER_HOME/ml-runtime"
+ML_MODEL_CACHE="$AMBER_HOME/models"
+PYTORCH_CPU_INDEX_URL="${AMBER_PYTORCH_CPU_INDEX_URL:-https://download.pytorch.org/whl/cpu}"
+PYPI_INDEX_URL="${AMBER_PYPI_INDEX_URL:-https://pypi.org/simple}"
+DEFAULT_ATTENTION_MODEL="MoritzLaurer/ModernBERT-base-zeroshot-v2.0"
+DEFAULT_ATTENTION_MODEL_REVISION="d421c4545a438fd006fb43f8b981c5d908faa1e1"
 WORKSPACE_NAME=""
 RELEASE_ARCHIVE="${AMBER_RELEASE_ARCHIVE:-}"
 RELEASE_URL="${AMBER_RELEASE_URL:-}"
@@ -361,11 +367,7 @@ configure_release_asset_choice() {
   if [[ -n "$INSTALL_VARIANT" ]]; then
     INSTALL_VARIANT="$(normalize_install_variant "$INSTALL_VARIANT")"
     if [[ -z "$ASSET_NAME_OVERRIDE" ]]; then
-      if [[ "$INSTALL_VARIANT" == "full" ]]; then
-        ASSET_NAME="$FULL_ASSET_NAME"
-      else
-        ASSET_NAME="$DEFAULT_ASSET_NAME"
-      fi
+      ASSET_NAME="$DEFAULT_ASSET_NAME"
     fi
   elif [[ -n "$ASSET_NAME_OVERRIDE" || -n "$RELEASE_ARCHIVE" || -n "$RELEASE_URL" ]]; then
     INSTALL_VARIANT="custom"
@@ -375,7 +377,7 @@ configure_release_asset_choice() {
 
   case "$INSTALL_VARIANT" in
     full)
-      info "Using full Amber package with local ModernBERT scorer: $ASSET_NAME"
+      info "Using Full install: $ASSET_NAME plus optional ModernBERT dependencies"
       ;;
     standard)
       info "Using standard Amber package: $ASSET_NAME"
@@ -394,11 +396,11 @@ choose_release_asset_variant() {
         "Which Amber version should be installed?" \
         0 \
         "Standard - smaller install, heuristic attention scoring" \
-        "Full - includes local ModernBERT scorer, about 2 GB"
+        "Full - downloads optional CPU ModernBERT dependencies"
     )"
     if [[ "$selected" == "1" ]]; then
       INSTALL_VARIANT="full"
-      ASSET_NAME="$FULL_ASSET_NAME"
+      ASSET_NAME="$DEFAULT_ASSET_NAME"
     else
       INSTALL_VARIANT="standard"
       ASSET_NAME="$DEFAULT_ASSET_NAME"
@@ -413,7 +415,7 @@ choose_release_asset_variant() {
   fi
 
   printf '  1) Standard - smaller install, heuristic attention scoring\n' >&2
-  printf '  2) Full - includes local ModernBERT scorer, about 2 GB\n' >&2
+  printf '  2) Full - downloads optional CPU ModernBERT dependencies\n' >&2
   prompt="Which Amber version should be installed? [1/2]"
   if ! read_tty_answer "$prompt"; then
     INSTALL_VARIANT="standard"
@@ -425,7 +427,7 @@ choose_release_asset_variant() {
   case "$answer" in
     2|full|ml|modernbert|bert)
       INSTALL_VARIANT="full"
-      ASSET_NAME="$FULL_ASSET_NAME"
+      ASSET_NAME="$DEFAULT_ASSET_NAME"
       ;;
     *)
       INSTALL_VARIANT="standard"
@@ -444,9 +446,10 @@ amber_log_to_stderr() {
 
 run_amber() {
   if installer_headless; then
-    AMBER_HEADLESS=1 AMBER_LOG_TO_STDERR="$(amber_log_to_stderr)" "$AMBER_HOME/bin/amber" "$@"
+    AMBER_HOME="$AMBER_HOME" AMBER_HEADLESS=1 AMBER_LOG_TO_STDERR="$(amber_log_to_stderr)" \
+      "$AMBER_HOME/bin/amber" "$@"
   else
-    AMBER_LOG_TO_STDERR="$(amber_log_to_stderr)" "$AMBER_HOME/bin/amber" "$@"
+    AMBER_HOME="$AMBER_HOME" AMBER_LOG_TO_STDERR="$(amber_log_to_stderr)" "$AMBER_HOME/bin/amber" "$@"
   fi
 }
 
@@ -1316,7 +1319,99 @@ install_release() {
 
   ln -sfn "$tag" "$AMBER_HOME/releases/current"
   ln -sfn "../releases/current/amber" "$AMBER_HOME/bin/amber"
+  INSTALLED_RELEASE_DIR="$release_dir"
   success "Installed Amber $tag to $release_dir"
+}
+
+ml_python_is_supported() {
+  "$1" -c 'import sys; raise SystemExit(0 if (3, 10) <= sys.version_info[:2] < (3, 15) else 1)' \
+    >/dev/null 2>&1
+}
+
+resolve_ml_python() {
+  local candidate
+  if [[ -n "${AMBER_ML_PYTHON:-}" ]]; then
+    if [[ ! -x "$AMBER_ML_PYTHON" ]] || ! ml_python_is_supported "$AMBER_ML_PYTHON"; then
+      error "AMBER_ML_PYTHON must point to Python 3.10 through 3.14."
+      exit 1
+    fi
+    printf '%s\n' "$AMBER_ML_PYTHON"
+    return
+  fi
+
+  # prefer the release development version, then accept any supported host Python
+  for candidate in python3.14 python3.13 python3.12 python3.11 python3.10 python3; do
+    if command -v "$candidate" >/dev/null 2>&1 && ml_python_is_supported "$candidate"; then
+      command -v "$candidate"
+      return
+    fi
+  done
+  error "Full Amber installation requires Python 3.10 through 3.14 for optional ML dependencies."
+  exit 1
+}
+
+ml_requirement() {
+  local requirements_path="$1"
+  local package="$2"
+  sed -n "s/^\\(${package}==[^[:space:]#]*\\).*$/\\1/p" "$requirements_path" | head -n 1
+}
+
+install_optional_ml_runtime() {
+  if [[ "$INSTALL_VARIANT" != "full" ]]; then
+    return 0
+  fi
+
+  local requirements_path worker_path host_python runtime_python torch_requirement transformers_requirement
+  requirements_path="$INSTALLED_RELEASE_DIR/resources/ml/requirements.txt"
+  worker_path="$INSTALLED_RELEASE_DIR/resources/ml/attention_worker.py"
+  if [[ ! -f "$requirements_path" || ! -f "$worker_path" ]]; then
+    error "Installed Amber release is missing optional ModernBERT setup resources."
+    exit 1
+  fi
+
+  # keep the optional interpreter and its packages outside every release archive
+  host_python="$(resolve_ml_python)"
+  runtime_python="$ML_RUNTIME_DIR/bin/python"
+  if [[ ! -x "$runtime_python" ]]; then
+    mkdir -p "${ML_RUNTIME_DIR%/*}"
+    if ! run_with_activity_progress "Creating optional ML environment" "$host_python" -m venv "$ML_RUNTIME_DIR"; then
+      error "Could not create the optional ML environment with $host_python."
+      error "Install that Python's venv support and rerun the installer."
+      exit 1
+    fi
+  fi
+
+  torch_requirement="$(ml_requirement "$requirements_path" "torch")"
+  transformers_requirement="$(ml_requirement "$requirements_path" "transformers")"
+  if [[ -z "$torch_requirement" || -z "$transformers_requirement" ]]; then
+    error "Optional ML requirements must pin both torch and transformers."
+    exit 1
+  fi
+
+  # fetch the CPU wheel from PyTorch and the model tooling from Python's package index
+  run_with_activity_progress \
+    "Installing CPU-only PyTorch from pytorch.org" \
+    "$runtime_python" -m pip install --quiet --disable-pip-version-check --no-input \
+    --index-url "$PYTORCH_CPU_INDEX_URL" "$torch_requirement"
+  run_with_activity_progress \
+    "Installing Transformers from pypi.org" \
+    "$runtime_python" -m pip install --quiet --disable-pip-version-check --no-input \
+    --index-url "$PYPI_INDEX_URL" "$transformers_requirement"
+
+  # prefetch the exact checkpoint Amber pins so first service startup stays offline
+  HF_HUB_DISABLE_TELEMETRY=1 HF_HUB_DISABLE_PROGRESS_BARS=1 run_with_activity_progress \
+    "Downloading pinned ModernBERT model from huggingface.co" \
+    "$runtime_python" "$worker_path" \
+    --model "$DEFAULT_ATTENTION_MODEL" \
+    --revision "$DEFAULT_ATTENTION_MODEL_REVISION" \
+    --device cpu \
+    --cache-dir "$ML_MODEL_CACHE" \
+    --prefetch
+
+  # prove the frozen Amber client can reach the managed runtime before enabling it
+  AMBER_ATTENTION_DEVICE=cpu AMBER_ML_RUNTIME_DIR="$ML_RUNTIME_DIR" AMBER_ML_MODEL_CACHE="$ML_MODEL_CACHE" \
+    run_with_activity_progress "Checking packaged ModernBERT scorer" run_amber attention check --quiet
+  success "Installed optional ModernBERT runtime in $ML_RUNTIME_DIR"
 }
 
 set_toml_key() {
@@ -1390,7 +1485,7 @@ apply_codex_workspace_overrides() {
   chmod 600 "$config_path" || true
 }
 
-apply_full_release_workspace_overrides() {
+apply_full_install_workspace_overrides() {
   local workspace="$1"
   local config_path="$AMBER_HOME/workspaces/$workspace/config.toml"
 
@@ -1412,7 +1507,7 @@ configure_workspace() {
   info "Initializing workspace $workspace..."
   run_amber workspace init "$workspace"
   apply_codex_workspace_overrides "$workspace"
-  apply_full_release_workspace_overrides "$workspace"
+  apply_full_install_workspace_overrides "$workspace"
 
   # honor explicit headless mode without probing or consuming terminal input
   if installer_headless; then
@@ -1545,6 +1640,7 @@ main() {
   section "Install Amber"
   configure_release_asset_choice
   install_release
+  install_optional_ml_runtime
   configure_shell_path
   if [[ -z "$WORKSPACE_NAME" ]]; then
     WORKSPACE_NAME="$(prompt "Workspace name")"

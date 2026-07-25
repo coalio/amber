@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import os
+import sys
 from dataclasses import dataclass
 
 from telethon import TelegramClient
@@ -198,11 +199,17 @@ def _build_attention_scorer(override: object | None = None, *, mode: str | None 
     if scorer_mode not in {"modernbert", "zero-shot", "zero_shot", "local-ml", "local_ml"}:
         raise RuntimeError("AMBER_ATTENTION_SCORER must be heuristic or modernbert.")
     try:
-        module = importlib.import_module("src.attention.scoring.zero_shot")
-        scorer_cls = getattr(module, "AttentionPolicyScorer")
+        # packaged releases isolate heavyweight dependencies in an installer-managed process
+        if getattr(sys, "frozen", False):
+            module = importlib.import_module("src.attention.scoring.managed")
+            scorer_cls = getattr(module, "ManagedAttentionPolicyScorer")
+        else:
+            module = importlib.import_module("src.attention.scoring.zero_shot")
+            scorer_cls = getattr(module, "AttentionPolicyScorer")
         return scorer_cls()
     except (ImportError, ModuleNotFoundError) as exc:
         raise RuntimeError(
             "AMBER_ATTENTION_SCORER=modernbert requires optional ML dependencies. "
-            "Install them with `pip install -r requirements-ml.txt`, or use the default heuristic scorer."
+            "Rerun the installer and choose Full, install `requirements-ml.txt` for source development, "
+            "or use the default heuristic scorer."
         ) from exc

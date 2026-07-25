@@ -239,18 +239,13 @@ def test_installer_headless_uses_defaults_and_skips_interactive_setup(tmp_path: 
         {
           "tag_name": "v0.6.0",
           "assets": [
-            {"browser_download_url": "https://downloads.example/amber-linux-x86_64.tar.gz"},
-            {"browser_download_url": "https://downloads.example/amber-linux-x86_64-full.tar.gz"}
+            {"browser_download_url": "https://downloads.example/amber-linux-x86_64.tar.gz"}
           ]
         }
         JSON
             ;;
           *amber-linux-x86_64.tar.gz)
             cp "$FAKE_ARCHIVE" "$out"
-            ;;
-          *amber-linux-x86_64-full.tar.gz)
-            echo "full package should not have been downloaded in headless default mode" >&2
-            exit 3
             ;;
           *)
             echo "unexpected curl url: $url" >&2
@@ -308,6 +303,30 @@ def test_installer_can_install_full_modernbert_release(tmp_path: Path) -> None:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     _add_fake_installer_prereqs(fake_bin)
+    ml_log = tmp_path / "ml.log"
+    _write_executable(
+        fake_bin / "python3.14",
+        """
+        #!/usr/bin/env bash
+        set -euo pipefail
+        if [[ "${1:-}" == "-c" ]]; then
+          exit 0
+        fi
+        if [[ "${1:-}" == "-m" && "${2:-}" == "venv" ]]; then
+          runtime_dir="${3:?runtime directory required}"
+          mkdir -p "$runtime_dir/bin"
+          cat > "$runtime_dir/bin/python" <<'PYTHON'
+        #!/usr/bin/env bash
+        set -euo pipefail
+        printf '%s\\n' "$*" >> "$FAKE_ML_LOG"
+        PYTHON
+          chmod +x "$runtime_dir/bin/python"
+          exit 0
+        fi
+        echo "unexpected host Python invocation: $*" >&2
+        exit 2
+        """,
+    )
     curl_log = tmp_path / "curl.log"
     _write_executable(
         fake_bin / "curl",
@@ -336,18 +355,13 @@ def test_installer_can_install_full_modernbert_release(tmp_path: Path) -> None:
         {
           "tag_name": "v0.5.0",
           "assets": [
-            {"browser_download_url": "https://downloads.example/amber-linux-x86_64.tar.gz"},
-            {"browser_download_url": "https://downloads.example/amber-linux-x86_64-full.tar.gz"}
+            {"browser_download_url": "https://downloads.example/amber-linux-x86_64.tar.gz"}
           ]
         }
         JSON
             ;;
-          *amber-linux-x86_64-full.tar.gz)
-            cp "$FAKE_ARCHIVE" "$out"
-            ;;
           *amber-linux-x86_64.tar.gz)
-            echo "standard package should not have been downloaded" >&2
-            exit 3
+            cp "$FAKE_ARCHIVE" "$out"
             ;;
           *)
             echo "unexpected curl url: $url" >&2
@@ -371,6 +385,7 @@ def test_installer_can_install_full_modernbert_release(tmp_path: Path) -> None:
             "AMBER_TTY": str(tty),
             "FAKE_ARCHIVE": str(archive),
             "FAKE_CURL_LOG": str(curl_log),
+            "FAKE_ML_LOG": str(ml_log),
             "PATH": f"{fake_bin}:{env['PATH']}",
             "TMPDIR": str(tmp_root),
         }
@@ -388,13 +403,19 @@ def test_installer_can_install_full_modernbert_release(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "Using full Amber package with local ModernBERT scorer: amber-linux-x86_64-full.tar.gz" in result.stdout
+    assert "Using Full install: amber-linux-x86_64.tar.gz plus optional ModernBERT dependencies" in result.stdout
+    assert "Installed optional ModernBERT runtime" in result.stdout
     assert "Enabling local ModernBERT attention scorer for this workspace..." in result.stdout
-    assert (amber_home / "packages" / "v0.5.0" / "amber-linux-x86_64-full.tar.gz").exists()
+    assert (amber_home / "packages" / "v0.5.0" / "amber-linux-x86_64.tar.gz").exists()
     assert curl_log.read_text(encoding="utf-8").splitlines() == [
         "https://api.github.com/repos/coalio/amber/releases/latest",
-        "https://downloads.example/amber-linux-x86_64-full.tar.gz",
+        "https://downloads.example/amber-linux-x86_64.tar.gz",
     ]
+    ml_commands = ml_log.read_text(encoding="utf-8")
+    assert "--index-url https://download.pytorch.org/whl/cpu torch==2.12.0" in ml_commands
+    assert "--index-url https://pypi.org/simple transformers==5.9.0" in ml_commands
+    assert "attention_worker.py" in ml_commands
+    assert "--revision d421c4545a438fd006fb43f8b981c5d908faa1e1" in ml_commands
     config = (amber_home / "workspaces" / "indiedreamers" / "config.toml").read_text(encoding="utf-8")
     assert 'scorer = "modernbert"' in config
 
@@ -1056,6 +1077,16 @@ def test_installer_preflight_fails_before_release_lookup_when_podman_is_broken(t
 def _make_release_archive(tmp_path: Path) -> Path:
     release_root = tmp_path / "release"
     release_root.mkdir()
+    ml_resources = release_root / "resources" / "ml"
+    ml_resources.mkdir(parents=True)
+    (ml_resources / "requirements.txt").write_text(
+        "torch==2.12.0\ntransformers==5.9.0\n",
+        encoding="utf-8",
+    )
+    (ml_resources / "attention_worker.py").write_text(
+        "# synthetic packaged ModernBERT worker\n",
+        encoding="utf-8",
+    )
     amber = release_root / "amber"
     amber.write_text(
         textwrap.dedent(
@@ -1086,7 +1117,8 @@ def _make_release_archive(tmp_path: Path) -> Path:
     amber.chmod(amber.stat().st_mode | stat.S_IXUSR)
     archive = tmp_path / "amber-linux-x86_64.tar.gz"
     with tarfile.open(archive, "w:gz") as handle:
-        handle.add(amber, arcname="amber")
+        for item in release_root.iterdir():
+            handle.add(item, arcname=item.name)
     return archive
 
 

@@ -7,6 +7,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import torch
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Amber ModernBERT inference worker")
@@ -19,9 +22,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def load_runtime(args: argparse.Namespace) -> tuple[Any, Any, Any, int]:
-    import torch
-    from transformers import AutoModelForSequenceClassification, AutoTokenizer
-
     # full installs intentionally use the maintainers' CPU wheel instead of CUDA payloads
     if args.device == "cpu" and torch.version.cuda is not None:
         raise RuntimeError(

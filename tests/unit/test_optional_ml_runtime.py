@@ -13,7 +13,7 @@ from src import cli
 from src.attention.constants import ATTENTION_LABEL_HYPOTHESES
 from src.attention.constants import DEFAULT_ATTENTION_MODEL, DEFAULT_ATTENTION_MODEL_REVISION
 from src.attention.scoring.managed import ManagedAttentionPolicyScorer
-from src.attention.scoring.zero_shot import AttentionPolicyScorer
+from src.attention.scoring.policy import AttentionPolicyScorer
 
 
 class _RecordingInference:
@@ -30,7 +30,7 @@ class _RecordingInference:
 
 def test_attention_policy_can_use_external_inference_without_loading_torch() -> None:
     inference = _RecordingInference()
-    scorer = AttentionPolicyScorer(inference=inference, warm=False)
+    scorer = AttentionPolicyScorer(inference, warm=False)
 
     first = scorer.classify_text("  Can   you help? ")
     second = scorer.classify_text("Can you help?")

@@ -9,12 +9,12 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from src.attention.constants import DEFAULT_ATTENTION_MODEL, DEFAULT_ATTENTION_MODEL_REVISION
-from src.attention.scoring.zero_shot import AttentionPolicyScorer
+from src.attention.scoring.policy import AttentionPolicyScorer
 from src.config.config import amber_home, resources_dir
 
 
 class ManagedModernBertInference:
-    """ModernBERT inference hosted by Amber's installer-managed Python environment."""
+    """ModernBERT inference over a persistent worker subprocess."""
 
     def __init__(
         self,
@@ -170,12 +170,12 @@ class ManagedAttentionPolicyScorer(AttentionPolicyScorer):
             device=device,
         )
         super().__init__(
+            inference,
             resolved_model,
             revision=resolved_revision,
             max_length=max_length,
             cache_size=cache_size,
             warm=warm,
-            inference=inference,
         )
         self._managed_inference = inference
 

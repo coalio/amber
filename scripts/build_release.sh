@@ -63,7 +63,6 @@ PYINSTALLER_FLAGS=(
   --exclude-module pytest
   --exclude-module _pytest
   --exclude-module tests
-  --hidden-import src.attention.scoring.zero_shot
   --hidden-import src.attention.scoring.managed
   --exclude-module torch
   --exclude-module transformers

@@ -90,7 +90,7 @@ mkdir -p \
   "$STAGING/resources/system" \
   "$STAGING/resources/prompts" \
   "$STAGING/resources/codex" \
-  "$STAGING/resources/codex-skills/CodexRules" \
+  "$STAGING/resources/codex-skills" \
   "$STAGING/resources/ml"
 
 cp -a "$DIST_DIR/$APP_NAME/." "$STAGING/"
@@ -103,7 +103,7 @@ cp "$ROOT/src/config/AI_SYSTEM_WORK.md" "$STAGING/resources/prompts/"
 cp "$ROOT/src/config/AI_ACTION_CONTRACT.md" "$STAGING/resources/prompts/"
 cp "$ROOT/src/config/AI_INTERRUPTION.md" "$STAGING/resources/prompts/"
 cp "$ROOT/src/config/MEMORY.md" "$STAGING/resources/prompts/"
-cp "$ROOT/src/config/skills/CodexRules/SKILL.md" "$STAGING/resources/codex-skills/CodexRules/SKILL.md"
+cp -a "$ROOT/src/config/skills/." "$STAGING/resources/codex-skills/"
 cp "$ROOT/installer/attention_worker.py" "$STAGING/resources/ml/attention_worker.py"
 cp "$ROOT/requirements-ml.txt" "$STAGING/resources/ml/requirements.txt"
 

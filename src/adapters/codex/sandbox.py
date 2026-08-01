@@ -34,7 +34,7 @@ def build_codex_adapter(
         codex_reasoning_effort=settings.codex_reasoning_effort,
         auto_update=settings.codex_auto_update,
         system_prompt_path=settings.codex_system_prompt_path,
-        rules_skill_path=settings.codex_rules_skill_path,
+        skill_paths=settings.codex_skill_paths,
         command_runner=command_runner,
         progress_callback=progress_callback,
         release_version=settings.release_version,

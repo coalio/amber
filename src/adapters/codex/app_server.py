@@ -532,15 +532,24 @@ class CodexTaskRunner:
 
     def _turn_input(self) -> list[dict[str, Any]]:
         text = self._task_prompt()
-        skill = self.payload.get("codex_rules_skill") if isinstance(self.payload.get("codex_rules_skill"), dict) else {}
-        if skill.get("use_for_task"):
-            name = str(skill.get("name") or "CodexRules")
-            path = str(skill.get("path") or "/codex-home/.codex/skills/CodexRules/SKILL.md")
-            return [
-                {"type": "text", "text": f"${name} {text}"},
-                {"type": "skill", "name": name, "path": path},
-            ]
-        return [{"type": "text", "text": text}]
+        raw_skills = self.payload.get("codex_skills")
+        skills = raw_skills if isinstance(raw_skills, list) else []
+        active_skills = [skill for skill in skills if isinstance(skill, dict) and skill.get("use_for_task")]
+        if not active_skills:
+            return [{"type": "text", "text": text}]
+
+        names = [str(skill.get("name") or "").strip() for skill in active_skills]
+        prompt = f"{' '.join(f'${name}' for name in names if name)} {text}"
+        skill_inputs = [
+            {
+                "type": "skill",
+                "name": name,
+                "path": str(skill.get("path") or f"/codex-home/.codex/skills/{name}/SKILL.md"),
+            }
+            for name, skill in zip(names, active_skills)
+            if name
+        ]
+        return [{"type": "text", "text": prompt}, *skill_inputs]
 
     def _task_prompt(self) -> str:
         context = self.payload.get("context") if isinstance(self.payload.get("context"), dict) else {}

@@ -11,6 +11,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from src.config.codex_skills import codex_skill_paths
+
 
 SOURCE_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_CONFIG_DIR = Path(__file__).resolve().parent
@@ -90,7 +92,7 @@ class Settings(BaseModel):
     codex_reasoning_effort: str
     codex_auto_update: bool
     codex_system_prompt_path: Path
-    codex_rules_skill_path: Path
+    codex_skill_paths: tuple[Path, ...]
     linear_enabled: bool
     linear_api_key: str | None
     linear_api_url: str
@@ -363,7 +365,7 @@ def _get_settings_cached(workspace_key: str | None, config_key: str | None) -> S
         codex_reasoning_effort=str(_value(data, ("codex", "reasoning_effort"))),
         codex_auto_update=_bool_value(_value(data, ("codex", "auto_update"))),
         codex_system_prompt_path=system_dir / "CODEX_SYSTEM.md",
-        codex_rules_skill_path=skill_dir / "CodexRules" / "SKILL.md",
+        codex_skill_paths=codex_skill_paths(skill_dir),
         linear_enabled=_bool_value(_value(data, ("linear", "enabled"))),
         linear_api_key=_optional_str(_value_or_none(data, ("linear", "api_key"))),
         linear_api_url=str(_value(data, ("linear", "api_url"))),

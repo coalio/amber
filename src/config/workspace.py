@@ -20,6 +20,7 @@ from src.config.config import (
     resource_prompt_dir,
     workspace_dir,
 )
+from src.config.codex_skills import CODEX_SKILL_NAMES
 
 
 EDITABLE_PROMPTS = (
@@ -43,7 +44,7 @@ def init_workspace(name: str, *, overwrite: bool = False) -> Path:
 
     for relative in (
         "prompts",
-        "codex-skills/CodexRules",
+        *(f"codex-skills/{name}" for name in CODEX_SKILL_NAMES),
         "telegram",
         "memories",
         "runtime-state",
@@ -55,7 +56,7 @@ def init_workspace(name: str, *, overwrite: bool = False) -> Path:
         (target / relative).mkdir(parents=True, exist_ok=True)
 
     _copy_editable_prompts(target, overwrite=overwrite)
-    _copy_codex_rules(target, overwrite=overwrite)
+    _copy_codex_skills(target, overwrite=overwrite)
     _write_initial_config(target, workspace_name, overwrite=overwrite)
     return target
 
@@ -114,7 +115,7 @@ def doctor_workspace(workspace: str | Path, *, validate_external: bool = False, 
         settings.ai_action_contract_prompt_path,
         settings.ai_interruption_prompt_path,
         settings.memory_prompt_path,
-        settings.codex_rules_skill_path,
+        *settings.codex_skill_paths,
     ]
     missing = [str(path) for path in required_files if not path.exists()]
     checks.append(DoctorCheck("resources", not missing, "all prompts and skills exist" if not missing else "\n".join(missing)))
@@ -294,9 +295,10 @@ def _copy_editable_prompts(target: Path, *, overwrite: bool) -> None:
         _copy_if_needed(source / filename, target / "prompts" / filename, overwrite=overwrite)
 
 
-def _copy_codex_rules(target: Path, *, overwrite: bool) -> None:
-    source = resource_codex_skill_dir() / "CodexRules" / "SKILL.md"
-    _copy_if_needed(source, target / "codex-skills" / "CodexRules" / "SKILL.md", overwrite=overwrite)
+def _copy_codex_skills(target: Path, *, overwrite: bool) -> None:
+    for name in CODEX_SKILL_NAMES:
+        source = resource_codex_skill_dir() / name / "SKILL.md"
+        _copy_if_needed(source, target / "codex-skills" / name / "SKILL.md", overwrite=overwrite)
 
 
 def _copy_if_needed(source: Path, destination: Path, *, overwrite: bool) -> None:

@@ -115,7 +115,9 @@ The files you are most likely to edit are:
 
 - `config.toml` for model, Telegram, Linear, timing, and runtime settings.
 - `prompts/*.md` for workspace-specific voice and behavior.
-- `codex-skills/CodexRules/SKILL.md` for the Codex sandbox rules used by this workspace.
+- `codex-skills/codex-development/SKILL.md` for Amber's general development workflow.
+- `codex-skills/codex-pr-reviews/SKILL.md` for pull-request feedback handling.
+- `codex-skills/python-style-rules/SKILL.md` for Python-specific implementation guidance.
 
 Run `workspace doctor` after changing config or auth:
 

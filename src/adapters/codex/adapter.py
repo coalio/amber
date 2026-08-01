@@ -15,6 +15,12 @@ from typing import Any, Literal, cast
 from urllib import error, parse, request
 
 from src.adapters.base import BaseAdapter
+from src.config.codex_skills import (
+    CODEX_DEVELOPMENT_SKILL,
+    CODEX_PR_REVIEWS_SKILL,
+    PYTHON_STYLE_RULES_SKILL,
+    codex_skill_paths,
+)
 from src.utils.ids import new_event_id
 from src.utils.logging import get_logger
 
@@ -105,7 +111,7 @@ class CodexAdapter(BaseAdapter):
         codex_reasoning_effort: str | None = "xhigh",
         auto_update: bool = True,
         system_prompt_path: Path | None = None,
-        rules_skill_path: Path | None = None,
+        skill_paths: tuple[Path, ...] | None = None,
         command_runner=subprocess.run,
         progress_callback: Callable[[str], None] | None = None,
         release_version: str = "development",
@@ -119,9 +125,9 @@ class CodexAdapter(BaseAdapter):
         self._system_prompt_path = (
             system_prompt_path or Path(__file__).resolve().parents[2] / "config" / "system" / "CODEX_SYSTEM.md"
         )
-        self._rules_skill_path = (
-            rules_skill_path
-            or Path(__file__).resolve().parents[2] / "config" / "skills" / "CodexRules" / "SKILL.md"
+        self._skill_paths = (
+            skill_paths
+            or codex_skill_paths(Path(__file__).resolve().parents[2] / "config" / "skills")
         )
         self._app_server_url = app_server_url.rstrip("/")
         self._app_server_port = app_server_port
@@ -225,11 +231,7 @@ class CodexAdapter(BaseAdapter):
             "system_prompt": self._system_prompt(),
             "codex_model": self._codex_model,
             "codex_reasoning_effort": self._codex_reasoning_effort,
-            "codex_rules_skill": {
-                "name": "CodexRules",
-                "path": "/codex-home/.codex/skills/CodexRules/SKILL.md",
-                "use_for_task": self._requires_codex_rules(task_description, raw_context),
-            },
+            "codex_skills": self._codex_skills_for_task(task_description, raw_context),
             "mode": "headless",
             "nuance_tolerance": "zero",
             "clarification_policy": {
@@ -628,7 +630,7 @@ class CodexAdapter(BaseAdapter):
         self._progress("installing codex app-server script")
         source = self._app_server_script_source()
         shutil.copyfile(source, self._workdir / ".amber_codex_app_server.py")
-        self._install_codex_rules_skill()
+        self._install_codex_skills()
 
     def _app_server_script_source(self) -> Path:
         candidates = (
@@ -643,15 +645,17 @@ class CodexAdapter(BaseAdapter):
             f"Looked in: {', '.join(str(candidate) for candidate in candidates)}"
         )
 
-    def _install_codex_rules_skill(self) -> None:
-        if not self._rules_skill_path.exists():
-            return
-        work_skill_dir = self._workdir / ".amber_codex_skills" / "CodexRules"
-        home_skill_dir = self._codex_home_dir / ".codex" / "skills" / "CodexRules"
-        work_skill_dir.mkdir(parents=True, exist_ok=True)
-        home_skill_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(self._rules_skill_path, work_skill_dir / "SKILL.md")
-        shutil.copyfile(self._rules_skill_path, home_skill_dir / "SKILL.md")
+    def _install_codex_skills(self) -> None:
+        for skill_path in self._skill_paths:
+            if not skill_path.exists():
+                continue
+            name = skill_path.parent.name
+            work_skill_dir = self._workdir / ".amber_codex_skills" / name
+            home_skill_dir = self._codex_home_dir / ".codex" / "skills" / name
+            work_skill_dir.mkdir(parents=True, exist_ok=True)
+            home_skill_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(skill_path, work_skill_dir / "SKILL.md")
+            shutil.copyfile(skill_path, home_skill_dir / "SKILL.md")
 
     def _start_app_server_process(self) -> None:
         self._progress("starting codex app-server process")
@@ -809,7 +813,28 @@ class CodexAdapter(BaseAdapter):
         except FileNotFoundError:
             return ""
 
-    def _requires_codex_rules(self, task_description: str, context: dict[str, Any]) -> bool:
+    def _codex_skills_for_task(self, task_description: str, context: dict[str, Any]) -> list[dict[str, Any]]:
+        active = self._required_codex_skill_names(task_description, context)
+        return [
+            {
+                "name": path.parent.name,
+                "path": f"/codex-home/.codex/skills/{path.parent.name}/SKILL.md",
+                "use_for_task": path.parent.name in active,
+            }
+            for path in self._skill_paths
+        ]
+
+    def _required_codex_skill_names(self, task_description: str, context: dict[str, Any]) -> set[str]:
+        required: set[str] = set()
+        if self._requires_codex_development(task_description, context):
+            required.add(CODEX_DEVELOPMENT_SKILL)
+        if self._requires_codex_pr_reviews(task_description, context):
+            required.add(CODEX_PR_REVIEWS_SKILL)
+        if self._requires_python_style(task_description, context):
+            required.add(PYTHON_STYLE_RULES_SKILL)
+        return required
+
+    def _requires_codex_development(self, task_description: str, context: dict[str, Any]) -> bool:
         explicit = context.get("requires_code_editing")
         if isinstance(explicit, bool):
             return explicit
@@ -848,6 +873,35 @@ class CodexAdapter(BaseAdapter):
         if any(marker in text for marker in edit_markers):
             return True
         return not any(marker in text for marker in read_only_markers)
+
+    def _requires_codex_pr_reviews(self, task_description: str, context: dict[str, Any]) -> bool:
+        text = f"{task_description} {json.dumps(context, sort_keys=True, default=str)}".lower()
+        return any(
+            marker in text
+            for marker in (
+                "pull request review",
+                "pr review",
+                "review comment",
+                "review feedback",
+                "requested changes",
+                "unresolved review",
+            )
+        )
+
+    def _requires_python_style(self, task_description: str, context: dict[str, Any]) -> bool:
+        text = f"{task_description} {json.dumps(context, sort_keys=True, default=str)}".lower()
+        return any(
+            marker in text
+            for marker in (
+                "python",
+                ".py",
+                "pytest",
+                "pydantic",
+                "django",
+                "fastapi",
+                "flask",
+            )
+        )
 
     def _run(self, args: list[str]) -> subprocess.CompletedProcess:
         command = [*self._podman_command_prefix(), *args]

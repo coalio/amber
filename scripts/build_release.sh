@@ -7,9 +7,7 @@ DIST_DIR="$ROOT/dist"
 BUILD_DIR="$ROOT/build"
 APP_NAME="amber"
 DEFAULT_ASSET_NAME="amber-linux-x86_64.tar.gz"
-FULL_ASSET_NAME="${AMBER_FULL_ASSET_NAME:-amber-linux-x86_64-full.tar.gz}"
 SPLIT_SIZE="${AMBER_SPLIT_SIZE:-1900M}"
-BUILD_ML="${AMBER_BUILD_ML:-}"
 VERSION="$(tr -d '[:space:]' < "$ROOT/VERSION")"
 
 flag_enabled() {
@@ -39,13 +37,11 @@ if [[ -n "$EXACT_TAG" && "$EXACT_TAG" != "v$VERSION" ]]; then
   exit 1
 fi
 
-if [[ -n "${AMBER_ASSET_NAME:-}" ]]; then
-  ASSET_NAME="$AMBER_ASSET_NAME"
-elif flag_enabled "$BUILD_ML"; then
-  ASSET_NAME="$FULL_ASSET_NAME"
-else
-  ASSET_NAME="$DEFAULT_ASSET_NAME"
+if flag_enabled "${AMBER_BUILD_ML:-}"; then
+  echo "AMBER_BUILD_ML is no longer supported; Full installs fetch optional ML dependencies at install time." >&2
+  exit 1
 fi
+ASSET_NAME="${AMBER_ASSET_NAME:-$DEFAULT_ASSET_NAME}"
 
 if [[ ! -x "$PYTHON" ]]; then
   PYTHON="$(command -v python3.14 || command -v python3)"
@@ -67,36 +63,35 @@ PYINSTALLER_FLAGS=(
   --exclude-module pytest
   --exclude-module _pytest
   --exclude-module tests
+  --hidden-import src.attention.scoring.managed
+  --exclude-module torch
+  --exclude-module transformers
+  --exclude-module safetensors
+  --exclude-module tokenizers
+  --exclude-module huggingface_hub
+  --exclude-module hf_xet
+  --exclude-module nvidia
+  --exclude-module triton
+  --exclude-module cuda
+  --exclude-module numpy
+  --exclude-module pandas
+  --exclude-module scipy
+  --exclude-module sklearn
+  --exclude-module joblib
+  --exclude-module threadpoolctl
 )
-
-if flag_enabled "$BUILD_ML"; then
-  PYINSTALLER_FLAGS+=(--hidden-import src.attention.scoring.zero_shot)
-else
-  PYINSTALLER_FLAGS+=(
-    --exclude-module torch
-    --exclude-module transformers
-    --exclude-module safetensors
-    --exclude-module tokenizers
-    --exclude-module huggingface_hub
-    --exclude-module hf_xet
-    --exclude-module nvidia
-    --exclude-module triton
-    --exclude-module cuda
-    --exclude-module numpy
-    --exclude-module pandas
-    --exclude-module scipy
-    --exclude-module sklearn
-    --exclude-module joblib
-    --exclude-module threadpoolctl
-  )
-fi
 
 "$PYTHON" -m PyInstaller \
   "${PYINSTALLER_FLAGS[@]}" \
   main.py
 
 STAGING="$DIST_DIR/release/$APP_NAME"
-mkdir -p "$STAGING/resources/system" "$STAGING/resources/prompts" "$STAGING/resources/codex" "$STAGING/resources/codex-skills/CodexRules"
+mkdir -p \
+  "$STAGING/resources/system" \
+  "$STAGING/resources/prompts" \
+  "$STAGING/resources/codex" \
+  "$STAGING/resources/codex-skills" \
+  "$STAGING/resources/ml"
 
 cp -a "$DIST_DIR/$APP_NAME/." "$STAGING/"
 cp "$ROOT/VERSION" "$STAGING/VERSION"
@@ -108,7 +103,9 @@ cp "$ROOT/src/config/AI_SYSTEM_WORK.md" "$STAGING/resources/prompts/"
 cp "$ROOT/src/config/AI_ACTION_CONTRACT.md" "$STAGING/resources/prompts/"
 cp "$ROOT/src/config/AI_INTERRUPTION.md" "$STAGING/resources/prompts/"
 cp "$ROOT/src/config/MEMORY.md" "$STAGING/resources/prompts/"
-cp "$ROOT/src/config/skills/CodexRules/SKILL.md" "$STAGING/resources/codex-skills/CodexRules/SKILL.md"
+cp -a "$ROOT/src/config/skills/." "$STAGING/resources/codex-skills/"
+cp "$ROOT/installer/attention_worker.py" "$STAGING/resources/ml/attention_worker.py"
+cp "$ROOT/requirements-ml.txt" "$STAGING/resources/ml/requirements.txt"
 
 tar -C "$STAGING" -czf "$DIST_DIR/$ASSET_NAME" .
 (

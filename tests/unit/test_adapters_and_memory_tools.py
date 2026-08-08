@@ -533,13 +533,42 @@ def test_codex_adapter_finds_packaged_app_server_resource(monkeypatch, tmp_path:
     assert adapter._app_server_script_source() == packaged_script
 
 
-def test_codex_rules_skill_is_optional_for_read_only_tasks() -> None:
+def test_codex_adapter_installs_each_configured_skill(tmp_path: Path) -> None:
+    source_root = tmp_path / "source-skills"
+    skill_paths: list[Path] = []
+    for name in ("codex-development", "codex-pr-reviews", "python-style-rules"):
+        skill_path = source_root / name / "SKILL.md"
+        skill_path.parent.mkdir(parents=True)
+        skill_path.write_text(f"---\nname: {name}\ndescription: test\n---\n", encoding="utf-8")
+        skill_paths.append(skill_path)
+
+    adapter = CodexAdapter(
+        workdir=tmp_path / "work",
+        codex_home_dir=tmp_path / "codex-home",
+        skill_paths=tuple(skill_paths),
+    )
+    adapter._install_codex_skills()
+
+    for name in ("codex-development", "codex-pr-reviews", "python-style-rules"):
+        assert (tmp_path / "work" / ".amber_codex_skills" / name / "SKILL.md").exists()
+        assert (tmp_path / "codex-home" / ".codex" / "skills" / name / "SKILL.md").exists()
+
+
+def test_codex_skills_activate_for_their_task_scope() -> None:
     adapter = CodexAdapter()
 
-    assert adapter._requires_codex_rules("Explain this repository without making changes.", {}) is False
-    assert adapter._requires_codex_rules("Implement a small parser.", {}) is True
-    assert adapter._requires_codex_rules("Inspect this bug report.", {"requires_code_editing": True}) is True
-    assert adapter._requires_codex_rules("Build the thing.", {"requires_code_editing": False}) is False
+    assert adapter._required_codex_skill_names("Explain this repository without making changes.", {}) == set()
+    assert adapter._required_codex_skill_names("Implement a small Python parser.", {}) == {
+        "codex-development",
+        "python-style-rules",
+    }
+    assert adapter._required_codex_skill_names("Fix the PR review comments.", {}) == {
+        "codex-development",
+        "codex-pr-reviews",
+    }
+    assert adapter._required_codex_skill_names("Build the Python thing.", {"requires_code_editing": False}) == {
+        "python-style-rules",
+    }
 
 
 class FakeCodexAdapter(BaseAdapter):
@@ -1073,17 +1102,24 @@ def test_codex_app_server_dynamic_tool_reports_pull_request_event() -> None:
     assert codex_app_server.TASKS[task_id]["pr_status"] == "opened"
 
 
-def test_codex_app_server_turn_input_injects_rules_skill_only_when_requested() -> None:
+def test_codex_app_server_turn_input_injects_each_requested_skill() -> None:
     editing_runner = codex_app_server.CodexTaskRunner(
         "task_edit",
         {
             "task_description": "Implement a feature.",
             "context": {},
-            "codex_rules_skill": {
-                "name": "CodexRules",
-                "path": "/codex-home/.codex/skills/CodexRules/SKILL.md",
-                "use_for_task": True,
-            },
+            "codex_skills": [
+                {
+                    "name": "codex-development",
+                    "path": "/codex-home/.codex/skills/codex-development/SKILL.md",
+                    "use_for_task": True,
+                },
+                {
+                    "name": "python-style-rules",
+                    "path": "/codex-home/.codex/skills/python-style-rules/SKILL.md",
+                    "use_for_task": True,
+                },
+            ],
         },
     )
     readonly_runner = codex_app_server.CodexTaskRunner(
@@ -1091,25 +1127,32 @@ def test_codex_app_server_turn_input_injects_rules_skill_only_when_requested() -
         {
             "task_description": "Explain the repo.",
             "context": {},
-            "codex_rules_skill": {
-                "name": "CodexRules",
-                "path": "/codex-home/.codex/skills/CodexRules/SKILL.md",
-                "use_for_task": False,
-            },
+            "codex_skills": [
+                {
+                    "name": "codex-development",
+                    "path": "/codex-home/.codex/skills/codex-development/SKILL.md",
+                    "use_for_task": False,
+                }
+            ],
         },
     )
 
     editing_input = editing_runner._turn_input()
     readonly_input = readonly_runner._turn_input()
 
-    assert editing_input[0]["text"].startswith("$CodexRules ")
+    assert editing_input[0]["text"].startswith("$codex-development $python-style-rules ")
     assert editing_input[1] == {
         "type": "skill",
-        "name": "CodexRules",
-        "path": "/codex-home/.codex/skills/CodexRules/SKILL.md",
+        "name": "codex-development",
+        "path": "/codex-home/.codex/skills/codex-development/SKILL.md",
+    }
+    assert editing_input[2] == {
+        "type": "skill",
+        "name": "python-style-rules",
+        "path": "/codex-home/.codex/skills/python-style-rules/SKILL.md",
     }
     assert len(readonly_input) == 1
-    assert not readonly_input[0]["text"].startswith("$CodexRules ")
+    assert not readonly_input[0]["text"].startswith("$codex-development ")
 
 
 def test_codex_app_server_starts_real_codex_in_yolo_mode() -> None:

@@ -108,3 +108,25 @@ def test_modernbert_attention_scorer_can_use_configured_mode(monkeypatch) -> Non
 
     assert isinstance(scorer, FakeScorer)
     assert imported == ["src.attention.scoring.zero_shot"]
+
+
+def test_packaged_modernbert_uses_installer_managed_runtime(monkeypatch) -> None:
+    class FakeScorer:
+        pass
+
+    class FakeModule:
+        ManagedAttentionPolicyScorer = FakeScorer
+
+    imported: list[str] = []
+
+    def fake_import_module(name: str):
+        imported.append(name)
+        return FakeModule
+
+    monkeypatch.setattr(runtime.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(runtime.importlib, "import_module", fake_import_module)
+
+    scorer = runtime._build_attention_scorer(mode="modernbert")
+
+    assert isinstance(scorer, FakeScorer)
+    assert imported == ["src.attention.scoring.managed"]

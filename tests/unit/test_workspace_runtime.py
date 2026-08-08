@@ -23,7 +23,9 @@ def test_workspace_init_creates_fixed_layout(monkeypatch, tmp_path) -> None:
     assert workspace == tmp_path / ".amber" / "workspaces" / "indiedreamers"
     assert (workspace / "config.toml").exists()
     assert (workspace / "prompts" / "AI_SYSTEM_WORK.md").exists()
-    assert (workspace / "codex-skills" / "CodexRules" / "SKILL.md").exists()
+    assert (workspace / "codex-skills" / "codex-development" / "SKILL.md").exists()
+    assert (workspace / "codex-skills" / "codex-pr-reviews" / "SKILL.md").exists()
+    assert (workspace / "codex-skills" / "python-style-rules" / "SKILL.md").exists()
     assert (workspace / "telegram").is_dir()
     assert (workspace / "memories").is_dir()
     assert (workspace / "runtime-state").is_dir()

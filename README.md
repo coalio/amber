@@ -22,7 +22,7 @@ Amber currently expects a Linux user environment with:
 
 The installer checks local commands, rootless Podman, cgroup v2, `slirp4netns`, and required `podman run` flags before it downloads the Amber release. It can offer an interactive package install for missing system packages, but it will not modify system packages in non-interactive runs. It cannot create external accounts for you.
 
-Amber uses lightweight heuristic attention scoring by default. The installer can also install the full package with the local ModernBERT scorer, but it requires Torch/Transformers and adds roughly 2 GB to the release.
+Amber uses lightweight heuristic attention scoring by default. The Full installer choice adds the local ModernBERT scorer by downloading its optional CPU runtime from PyTorch and PyPI and its pinned model from Hugging Face. Both choices use the same small Amber release archive; Amber does not mirror those third-party dependencies in GitHub release assets.
 
 ## Install
 
@@ -32,7 +32,9 @@ Run the installer with the workspace name you want to create:
 curl -fsSL https://raw.githubusercontent.com/coalio/amber/master/installer/install.sh | bash -s -- my-workspace
 ```
 
-This checks host prerequisites, lets you choose the standard or full local-ML package, asks before reusing cached or recovered packages, downloads the latest GitHub release when needed, installs Amber under `~/.amber`, creates `~/.amber/workspaces/my-workspace`, asks how to handle Codex sandbox cgroup/resource-limit probes, runs interactive authentication if you choose to configure the workspace immediately, and asks whether to install the optional user service.
+This checks host prerequisites, lets you choose Standard heuristic scoring or Full ModernBERT scoring, asks before reusing cached or recovered packages, downloads the latest GitHub release when needed, installs Amber under `~/.amber`, creates `~/.amber/workspaces/my-workspace`, asks how to handle Codex sandbox cgroup/resource-limit probes, runs interactive authentication if you choose to configure the workspace immediately, and asks whether to install the optional user service.
+
+Standard stays self-contained and does not install any ML dependencies. Full additionally creates `~/.amber/ml-runtime`, installs CPU-only PyTorch and Transformers from their maintainers, caches the pinned ModernBERT checkpoint under `~/.amber/models`, and enables `attention.scorer = "modernbert"` for the new workspace.
 
 After install, the Amber binary is here:
 
@@ -113,7 +115,9 @@ The files you are most likely to edit are:
 
 - `config.toml` for model, Telegram, Linear, timing, and runtime settings.
 - `prompts/*.md` for workspace-specific voice and behavior.
-- `codex-skills/CodexRules/SKILL.md` for the Codex sandbox rules used by this workspace.
+- `codex-skills/codex-development/SKILL.md` for Amber's general development workflow.
+- `codex-skills/codex-pr-reviews/SKILL.md` for pull-request feedback handling.
+- `codex-skills/python-style-rules/SKILL.md` for Python-specific implementation guidance.
 
 Run `workspace doctor` after changing config or auth:
 
@@ -130,7 +134,7 @@ pip install -r requirements-ml.txt
 AMBER_ATTENTION_SCORER=modernbert AMBER_ATTENTION_DEVICE=cpu python main.py run --workspace my-workspace
 ```
 
-The installer can install the full release package and enable `attention.scorer = "modernbert"` for the workspace. Maintainers can build that heavy package with `AMBER_BUILD_ML=1`.
+The Full installer choice installs these requirements into Amber's managed optional environment and enables `attention.scorer = "modernbert"` for the workspace. It downloads the CPU PyTorch wheel from `download.pytorch.org`, Transformers from PyPI, and the pinned checkpoint from Hugging Face instead of bundling them in Amber's release archive.
 
 ## Developer Docs
 

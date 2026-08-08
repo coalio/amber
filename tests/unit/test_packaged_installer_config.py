@@ -6,6 +6,7 @@ import re
 import stat
 import subprocess
 import sys
+import tarfile
 import threading
 import tomllib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -60,6 +61,13 @@ def test_packaged_installer_configure_preserves_nested_linear_defaults(tmp_path:
 
     amber_home = tmp_path / ".amber"
     archive = ROOT / "dist" / "amber-linux-x86_64.tar.gz"
+    with tarfile.open(archive, "r:gz") as packaged:
+        names = [name.removeprefix("./") for name in packaged.getnames()]
+    forbidden_roots = {"torch", "transformers", "nvidia", "triton", "cuda"}
+    assert not any(name.split("/", 1)[0] in forbidden_roots for name in names)
+    assert "resources/ml/attention_worker.py" in names
+    assert "resources/ml/requirements.txt" in names
+
     env = os.environ.copy()
     env.update(
         {

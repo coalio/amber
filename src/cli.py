@@ -16,6 +16,8 @@ CODEX_AUTH_METHODS = ("api-key", "device", "access-token")
 HELP_ACCENT = "\033[38;5;218m"
 HELP_RESET = "\033[0m"
 HELP_COMMANDS = {
+    "attention",
+    "check",
     "configure",
     "doctor",
     "init",
@@ -51,6 +53,8 @@ def _main(argv: list[str] | None = None) -> int:
         return _workspace(args)
     if args.command == "service":
         return _service(args)
+    if args.command == "attention":
+        return _attention(args)
     if args.command == "version":
         return _version()
     parser.print_help()
@@ -175,6 +179,15 @@ def _build_parser() -> argparse.ArgumentParser:
         item = service_subparsers.add_parser(command, help=f"{command.title()} the systemd user unit.")
         item.add_argument("--workspace", required=True)
 
+    attention_parser = subparsers.add_parser("attention", help="Manage optional attention scoring.")
+    attention_subparsers = attention_parser.add_subparsers(
+        dest="attention_command",
+        required=True,
+        parser_class=AmberArgumentParser,
+    )
+    check_parser = attention_subparsers.add_parser("check", help="Check the installed ModernBERT scorer.")
+    check_parser.add_argument("--quiet", action="store_true", help="Only report failures.")
+
     subparsers.add_parser("version", help="Print Amber release information.")
     return parser
 
@@ -242,6 +255,25 @@ def _service(args: argparse.Namespace) -> int:
         command = ["systemctl", "--user", args.service_command, unit_name]
         return subprocess.run(command, check=False).returncode
     raise RuntimeError(f"Unknown service command: {args.service_command}")
+
+
+def _attention(args: argparse.Namespace) -> int:
+    if args.attention_command != "check":
+        raise RuntimeError(f"Unknown attention command: {args.attention_command}")
+
+    from src.runtime import _build_attention_scorer
+
+    # exercise the selected backend through the same scorer boundary used by the service
+    scorer = _build_attention_scorer(mode="modernbert")
+    try:
+        classification = scorer.classify_text("hello")
+    finally:
+        close = getattr(scorer, "close", None)
+        if callable(close):
+            close()
+    if not args.quiet:
+        print(f"modernbert scorer ok: {classification.model_name}@{classification.model_revision}")
+    return 0
 
 
 def _version() -> int:

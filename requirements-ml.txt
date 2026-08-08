@@ -1,4 +1,4 @@
 # Optional local ModernBERT attention scorer dependencies.
-# Not installed by default because Torch/Transformers pull multi-GB runtime libraries.
+# Full installer mode fetches the CPU-only Torch wheel; source installs choose their own accelerator build.
 torch==2.12.0
 transformers==5.9.0

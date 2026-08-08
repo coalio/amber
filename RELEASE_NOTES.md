@@ -1,9 +1,14 @@
-# Amber 0.3.1
+# Amber 0.4.0
 
-## Fixed
+## Added
 
-- Preserve nested Linear project and issue status defaults when interactive workspace setup saves credentials, preventing fresh installer runs from failing with a missing `linear.project.statuses` value.
+- Let Full installs add CPU-only PyTorch, Transformers, and the pinned ModernBERT checkpoint from their upstream maintainers while Standard installs remain unchanged.
+- Install focused Codex development, pull-request review, and Python style skills in every workspace.
+
+## Changed
+
+- Run optional ModernBERT scoring through an Amber-managed worker so the release archive stays small and does not bundle third-party ML runtimes.
 
 ## Validation
 
-- The unit suite includes a packaged-installer regression that builds the standard archive, installs it through `installer/install.sh`, and runs the packaged workspace configuration past the former failure point.
+- The unit suite covers Standard and Full installer selection, optional runtime setup, packaged ModernBERT checks, and workspace skill installation.

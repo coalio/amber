@@ -1,14 +1,14 @@
-# Amber 0.4.0
+# Amber 0.4.1
 
-## Added
+## Fixed
 
-- Let Full installs add CPU-only PyTorch, Transformers, and the pinned ModernBERT checkpoint from their upstream maintainers while Standard installs remain unchanged.
-- Install focused Codex development, pull-request review, and Python style skills in every workspace.
+- Detect stopped or unhealthy Codex sandbox containers, stale bind mounts, invalid working directories, and unavailable app-server health through ordered workspace doctor stages.
+- Let users explicitly recreate a repairable Codex container while preserving bind-mounted workspace data and leaving the optional systemd service untouched.
 
 ## Changed
 
-- Run optional ModernBERT scoring through an Amber-managed worker so the release archive stays small and does not bundle third-party ML runtimes.
+- Have the installer diagnose an existing Codex sandbox before configuration, offer repair interactively, and provide an explicit repair command in headless mode.
 
 ## Validation
 
-- The unit suite covers Standard and Full installer selection, optional runtime setup, packaged ModernBERT checks, and workspace skill installation.
+- The unit suite covers ordered doctor stages, repair eligibility, preserved workspace data, installer repair choices, and packaged doctor CLI behavior.

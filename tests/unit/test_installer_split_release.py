@@ -105,6 +105,7 @@ def test_installer_downloads_split_release_without_full_asset(tmp_path: Path) ->
     assert (tmp_path / ".amber" / "releases" / "v0.1.0" / "amber").exists()
     assert (tmp_path / ".amber" / "bin" / "amber").resolve() == tmp_path / ".amber" / "releases" / "v0.1.0" / "amber"
     assert fake_log.read_text(encoding="utf-8").splitlines() == [
+        "version",
         "workspace init indiedreamers",
         "workspace doctor indiedreamers --stage container",
         "workspace configure indiedreamers",
@@ -290,6 +291,7 @@ def test_installer_headless_uses_defaults_and_skips_interactive_setup(tmp_path: 
     assert "Using standard Amber package: amber-linux-x86_64.tar.gz" in result.stdout
     assert "Headless install skipped interactive workspace configuration." in result.stdout
     assert fake_log.read_text(encoding="utf-8").splitlines() == [
+        "version",
         "workspace init indiedreamers",
         "workspace doctor indiedreamers --stage container",
     ]
@@ -334,6 +336,7 @@ def test_installer_uses_doctor_to_offer_container_recreation(tmp_path: Path) -> 
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert fake_log.read_text(encoding="utf-8").splitlines() == [
+        "version",
         "workspace init indiedreamers",
         "workspace doctor indiedreamers --stage container",
         "workspace doctor indiedreamers --stage container --repair",
@@ -374,6 +377,7 @@ def test_headless_installer_does_not_recreate_an_unhealthy_container(tmp_path: P
 
     assert result.returncode != 0
     assert fake_log.read_text(encoding="utf-8").splitlines() == [
+        "version",
         "workspace init indiedreamers",
         "workspace doctor indiedreamers --stage container",
     ]
@@ -1155,6 +1159,169 @@ def test_installer_preflight_fails_before_release_lookup_when_podman_is_broken(t
     assert result.returncode != 0
     assert "Amber installer preflight failed before downloading the release." in result.stderr
     assert not curl_log.exists()
+
+
+def test_installer_preflight_rejects_older_glibc_before_release_lookup(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _add_fake_installer_prereqs(fake_bin)
+    _write_executable(
+        fake_bin / "getconf",
+        """
+        #!/usr/bin/env bash
+        printf '%s\n' 'glibc 2.34'
+        """,
+    )
+    curl_log = tmp_path / "curl.log"
+    _write_executable(
+        fake_bin / "curl",
+        """
+        #!/usr/bin/env bash
+        printf '%s\n' "$*" >> "$FAKE_CURL_LOG"
+        exit 2
+        """,
+    )
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "AMBER_HOME": str(tmp_path / ".amber"),
+            "FAKE_CURL_LOG": str(curl_log),
+            "PATH": f"{fake_bin}:{env['PATH']}",
+        }
+    )
+    result = subprocess.run(
+        ["bash", "installer/install.sh", "--headless", "indiedreamers"],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode != 0
+    assert "GNU libc 2.35 or newer; detected 2.34" in result.stderr
+    assert not curl_log.exists()
+
+
+def test_installer_prepares_user_manager_before_installing_service(tmp_path: Path) -> None:
+    archive = _make_release_archive(tmp_path)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _add_fake_installer_prereqs(fake_bin)
+    _write_executable(
+        fake_bin / "loginctl",
+        """
+        #!/usr/bin/env bash
+        printf 'loginctl %s\n' "$*" >> "$AMBER_FAKE_LOG"
+        """,
+    )
+    _write_executable(
+        fake_bin / "systemctl",
+        """
+        #!/usr/bin/env bash
+        printf 'systemctl %s\n' "$*" >> "$AMBER_FAKE_LOG"
+        """,
+    )
+    _write_executable(
+        fake_bin / "id",
+        """
+        #!/usr/bin/env bash
+        case "${1:-}" in
+          -u) printf '%s\n' '1000' ;;
+          -un) printf '%s\n' 'amber-test' ;;
+          *) exit 2 ;;
+        esac
+        """,
+    )
+    tty = tmp_path / "tty"
+    tty.write_text("\n\ny\n", encoding="utf-8")
+    fake_log = tmp_path / "amber.log"
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "AMBER_FAKE_LOG": str(fake_log),
+            "AMBER_HOME": str(tmp_path / ".amber"),
+            "AMBER_RELEASE_ARCHIVE": str(archive),
+            "AMBER_RELEASE_TAG": "local",
+            "AMBER_TTY": str(tty),
+            "PATH": f"{fake_bin}:{env['PATH']}",
+        }
+    )
+    result = subprocess.run(
+        ["bash", "installer/install.sh", "indiedreamers"],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    sequence = fake_log.read_text(encoding="utf-8").splitlines()
+    assert sequence[-3:] == [
+        "loginctl enable-linger amber-test",
+        "systemctl --user show-environment",
+        "service install --workspace indiedreamers --enable --now",
+    ]
+    assert "Systemd user manager is ready" in result.stdout
+
+
+def test_installer_stops_before_service_when_linger_and_user_manager_fail(tmp_path: Path) -> None:
+    archive = _make_release_archive(tmp_path)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _add_fake_installer_prereqs(fake_bin)
+    _write_executable(fake_bin / "loginctl", "#!/usr/bin/env bash\nexit 1\n")
+    _write_executable(fake_bin / "systemctl", "#!/usr/bin/env bash\nexit 1\n")
+    _write_executable(
+        fake_bin / "id",
+        """
+        #!/usr/bin/env bash
+        case "${1:-}" in
+          -u) printf '%s\n' '1000' ;;
+          -un) printf '%s\n' 'amber-test' ;;
+          *) exit 2 ;;
+        esac
+        """,
+    )
+    tty = tmp_path / "tty"
+    tty.write_text("\n\ny\n", encoding="utf-8")
+    fake_log = tmp_path / "amber.log"
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "AMBER_FAKE_LOG": str(fake_log),
+            "AMBER_HOME": str(tmp_path / ".amber"),
+            "AMBER_RELEASE_ARCHIVE": str(archive),
+            "AMBER_RELEASE_TAG": "local",
+            "AMBER_TTY": str(tty),
+            "PATH": f"{fake_bin}:{env['PATH']}",
+        }
+    )
+    result = subprocess.run(
+        ["bash", "installer/install.sh", "indiedreamers"],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode != 0
+    assert "sudo loginctl enable-linger amber-test" in result.stderr
+    assert not any(
+        line.startswith("service install")
+        for line in fake_log.read_text(encoding="utf-8").splitlines()
+    )
 
 
 def _make_release_archive(tmp_path: Path) -> Path:

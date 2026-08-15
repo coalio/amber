@@ -23,6 +23,7 @@ from src.config.codex_skills import (
 )
 from src.utils.ids import new_event_id
 from src.utils.logging import get_logger
+from src.utils.process import run_host_command
 
 
 CodexNotificationKind = Literal["milestone", "completion", "blocked", "failed"]
@@ -905,8 +906,9 @@ class CodexAdapter(BaseAdapter):
 
     def _run(self, args: list[str]) -> subprocess.CompletedProcess:
         command = [*self._podman_command_prefix(), *args]
-        result = self._command_runner(
+        result = run_host_command(
             command,
+            runner=self._command_runner,
             check=False,
             text=True,
             stdout=subprocess.PIPE,
@@ -925,8 +927,9 @@ class CodexAdapter(BaseAdapter):
         return result
 
     def _podman_success(self, args: list[str]) -> bool:
-        result = self._command_runner(
+        result = run_host_command(
             [*self._podman_command_prefix(), *args],
+            runner=self._command_runner,
             check=False,
             text=True,
             stdout=subprocess.PIPE,

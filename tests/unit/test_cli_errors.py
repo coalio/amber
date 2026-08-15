@@ -80,6 +80,7 @@ def test_service_stop_cleans_codex_container_before_systemctl(monkeypatch) -> No
         return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr(cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(cli.shutil, "which", lambda command: command)
 
     result = cli._service(SimpleNamespace(service_command="stop", workspace="indiedreamers"))
 

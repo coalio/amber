@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import subprocess
+from types import SimpleNamespace
 
 from src.ai.semantic.config import SemanticConfig
 from src.config.config import get_settings
@@ -129,6 +131,58 @@ def test_user_service_unit_uses_workspace_and_amber_home(monkeypatch, tmp_path) 
     assert path == tmp_path / ".config" / "systemd" / "user" / "amber-indiedreamers.service"
     assert path.read_text(encoding="utf-8") == unit
 
+    get_settings.cache_clear()
+
+
+def test_user_service_commands_restore_host_library_path(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("AMBER_HOME", str(tmp_path / ".amber"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/release/_internal:/host/lib")
+    monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/host/lib")
+    monkeypatch.setattr("src.utils.process.sys", SimpleNamespace(frozen=True))
+    get_settings.cache_clear()
+    init_workspace("indiedreamers")
+    calls: list[tuple[list[str], dict[str, str]]] = []
+
+    def fake_run(command: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
+        calls.append((command, kwargs["env"]))
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("src.config.workspace.shutil.which", lambda command: f"/usr/bin/{command}")
+    monkeypatch.setattr("src.config.workspace.subprocess.run", fake_run)
+
+    install_user_service("indiedreamers", enable=True, now=True)
+
+    assert [command for command, _env in calls] == [
+        ["/usr/bin/systemctl", "--user", "daemon-reload"],
+        [
+            "/usr/bin/systemctl",
+            "--user",
+            "enable",
+            "--now",
+            "amber-indiedreamers.service",
+        ],
+    ]
+    assert all(env["LD_LIBRARY_PATH"] == "/host/lib" for _command, env in calls)
+    assert os.environ["LD_LIBRARY_PATH"] == "/release/_internal:/host/lib"
+    get_settings.cache_clear()
+
+
+def test_user_service_enable_fails_cleanly_without_systemctl(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("AMBER_HOME", str(tmp_path / ".amber"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+    get_settings.cache_clear()
+    init_workspace("indiedreamers")
+    monkeypatch.setattr("src.config.workspace.shutil.which", lambda _command: None)
+
+    try:
+        install_user_service("indiedreamers", enable=True)
+    except RuntimeError as exc:
+        assert "requires `systemctl` on PATH" in str(exc)
+    else:
+        raise AssertionError("service enable unexpectedly succeeded without systemctl")
+
+    assert not (tmp_path / ".config" / "systemd" / "user" / "amber-indiedreamers.service").exists()
     get_settings.cache_clear()
 
 

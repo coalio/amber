@@ -20,6 +20,7 @@ from src.config.config import (
 )
 from src.config.codex_skills import CODEX_SKILL_NAMES
 from src.config.doctor import codex_container_cleanup_command
+from src.utils.process import run_host_command
 
 
 EDITABLE_PROMPTS = (
@@ -133,25 +134,67 @@ def render_user_service(workspace: str | Path) -> str:
 
 def install_user_service(workspace: str | Path, *, enable: bool = False, now: bool = False) -> Path:
     path = service_unit_path(workspace)
+    systemctl = shutil.which("systemctl")
+    if (enable or now) and systemctl is None:
+        raise RuntimeError("The optional user service requires `systemctl` on PATH.")
+
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(render_user_service(workspace), encoding="utf-8")
     if enable or now:
-        subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
-        command = ["systemctl", "--user", "enable"]
+        assert systemctl is not None
+        reload_result = run_host_command(
+            [systemctl, "--user", "daemon-reload"],
+            runner=subprocess.run,
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if reload_result.returncode != 0:
+            detail = (reload_result.stderr or reload_result.stdout or "").strip()
+            raise RuntimeError(
+                "Could not reload the systemd user manager"
+                + (f": {detail}" if detail else ".")
+            )
+        command = [systemctl, "--user", "enable"]
         if now:
             command.append("--now")
         command.append(service_unit_name(workspace))
-        subprocess.run(command, check=True)
+        enable_result = run_host_command(
+            command,
+            runner=subprocess.run,
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if enable_result.returncode != 0:
+            detail = (enable_result.stderr or enable_result.stdout or "").strip()
+            raise RuntimeError(
+                "Could not enable the systemd user service"
+                + (f": {detail}" if detail else ".")
+            )
     return path
 
 
 def uninstall_user_service(workspace: str | Path) -> None:
     name = service_unit_name(workspace)
-    subprocess.run(["systemctl", "--user", "disable", "--now", name], check=False)
+    systemctl = shutil.which("systemctl")
+    if systemctl is None:
+        raise RuntimeError("The optional user service requires `systemctl` on PATH.")
+    run_host_command(
+        [systemctl, "--user", "disable", "--now", name],
+        runner=subprocess.run,
+        check=False,
+    )
     path = service_unit_path(workspace)
     if path.exists():
         path.unlink()
-    subprocess.run(["systemctl", "--user", "daemon-reload"], check=False)
+    run_host_command(
+        [systemctl, "--user", "daemon-reload"],
+        runner=subprocess.run,
+        check=False,
+    )
 
 
 def first_available_port(*, start: int = 8765, end: int = 8865) -> int:

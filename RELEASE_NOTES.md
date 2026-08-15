@@ -1,14 +1,16 @@
-# Amber 0.4.1
+# Amber 0.4.2
 
 ## Fixed
 
-- Detect stopped or unhealthy Codex sandbox containers, stale bind mounts, invalid working directories, and unavailable app-server health through ordered workspace doctor stages.
-- Let users explicitly recreate a repairable Codex container while preserving bind-mounted workspace data and leaving the optional systemd service untouched.
+- Restore the host dynamic-library environment before frozen Amber launches `systemctl`, Podman, the optional ML runtime, or other host programs. This prevents Amber's bundled OpenSSL from overriding newer host libraries.
+- Report systemd user-service failures as concise CLI errors instead of unhandled subprocess tracebacks.
 
 ## Changed
 
-- Have the installer diagnose an existing Codex sandbox before configuration, offer repair interactively, and provide an explicit repair command in headless mode.
+- Check Linux x86-64 and GNU libc compatibility before downloading a release, then smoke-test the extracted binary before changing the active-release symlink.
+- Enable lingering and wait for the systemd user manager before installing the optional user service.
+- Document the complete Standard, Full, Codex sandbox, and optional user-service prerequisites.
 
 ## Validation
 
-- The unit suite covers ordered doctor stages, repair eligibility, preserved workspace data, installer repair choices, and packaged doctor CLI behavior.
+- The 202-test unit suite covers host-loader restoration, installer compatibility checks, service-manager ordering, and the packaged PyInstaller subprocess boundary.

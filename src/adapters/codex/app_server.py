@@ -192,7 +192,8 @@ def _dynamic_tools() -> list[dict[str, Any]]:
                 "This does not expect a response. Do not report routine incremental progress. "
                 "If the user requested command output, script output, generated values, file paths, PR URLs, "
                 "or other concrete results, include the exact result in the message. Do not merely say it was captured. "
-                "A completion message must include both what was implemented and the validated result."
+                "Otherwise send only the concise user-relevant outcome and keep routine implementation and validation "
+                "evidence in the private task audit."
             ),
             "inputSchema": {
                 "type": "object",

@@ -11,6 +11,7 @@ from typing import Literal
 from urllib import request
 
 from src.config.config import Settings, get_settings, workspace_dir
+from src.utils.process import run_host_command
 
 
 DoctorRepair = Literal["recreate-codex-container"]
@@ -101,8 +102,9 @@ def recreate_codex_container(
     cleanup = codex_container_cleanup_command(settings.workspace_dir)
 
     # remove both runtime and bootstrap containers while preserving bind-mounted data
-    result = subprocess.run(
+    result = run_host_command(
         cleanup,
+        runner=subprocess.run,
         check=False,
         text=True,
         stdout=subprocess.PIPE,
@@ -147,8 +149,12 @@ def stop_workspace_codex_containers(workspace: str | Path) -> None:
     except Exception:
         return
     try:
-        subprocess.run(
-            command, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        run_host_command(
+            command,
+            runner=subprocess.run,
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
     except OSError:
         return
@@ -156,8 +162,14 @@ def stop_workspace_codex_containers(workspace: str | Path) -> None:
 
 def service_status_check(workspace: str | Path) -> DoctorCheck:
     name = f"amber-{workspace_dir(workspace).name}.service"
-    result = subprocess.run(
-        ["systemctl", "--user", "is-enabled", name],
+    systemctl = shutil.which("systemctl")
+    if systemctl is None:
+        return DoctorCheck(
+            "systemd-user-service", False, "`systemctl` was not found on PATH"
+        )
+    result = run_host_command(
+        [systemctl, "--user", "is-enabled", name],
+        runner=subprocess.run,
         check=False,
         text=True,
         stdout=subprocess.PIPE,
@@ -425,8 +437,9 @@ def _run_podman(
         command.append(f"--cgroup-manager={settings.codex_podman_cgroup_manager}")
     command.extend(args)
     try:
-        return subprocess.run(
+        return run_host_command(
             command,
+            runner=subprocess.run,
             check=False,
             text=True,
             stdout=subprocess.PIPE,
@@ -492,8 +505,9 @@ def _required_value_check(name: str, value: str | None) -> DoctorCheck:
 
 
 def _podman_info(podman_executable: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    return run_host_command(
         [podman_executable, "info", "--debug"],
+        runner=subprocess.run,
         check=False,
         text=True,
         stdout=subprocess.PIPE,
@@ -554,8 +568,9 @@ def _podman_network_helper_check() -> DoctorCheck:
 
 
 def _podman_run_flags_check(podman_executable: str) -> DoctorCheck:
-    result = subprocess.run(
+    result = run_host_command(
         [podman_executable, "run", "--help"],
+        runner=subprocess.run,
         check=False,
         text=True,
         stdout=subprocess.PIPE,
@@ -596,8 +611,9 @@ def _codex_resource_limits_check(
 
 
 def _local_cgroup_v2_detail() -> tuple[bool, str]:
-    result = subprocess.run(
+    result = run_host_command(
         ["stat", "-fc", "%T", "/sys/fs/cgroup"],
+        runner=subprocess.run,
         check=False,
         text=True,
         stdout=subprocess.PIPE,

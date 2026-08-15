@@ -4,12 +4,14 @@ import argparse
 import asyncio
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
 from src.cli_input import choice_menu_supported, headless_enabled, read_choice, read_masked_secret
+from src.utils.process import run_host_command
 
 
 CODEX_AUTH_METHODS = ("api-key", "device", "access-token")
@@ -297,8 +299,11 @@ def _service(args: argparse.Namespace) -> int:
     if args.service_command in {"start", "stop", "status"}:
         if args.service_command == "stop":
             stop_workspace_codex_containers(args.workspace)
-        command = ["systemctl", "--user", args.service_command, unit_name]
-        return subprocess.run(command, check=False).returncode
+        systemctl = shutil.which("systemctl")
+        if systemctl is None:
+            raise RuntimeError("The optional user service requires `systemctl` on PATH.")
+        command = [systemctl, "--user", args.service_command, unit_name]
+        return run_host_command(command, runner=subprocess.run, check=False).returncode
     raise RuntimeError(f"Unknown service command: {args.service_command}")
 
 

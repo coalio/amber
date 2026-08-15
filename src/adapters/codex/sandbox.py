@@ -6,6 +6,7 @@ from collections.abc import Callable
 
 from src.adapters.codex.adapter import CodexAdapter
 from src.config.config import Settings
+from src.utils.process import run_host_command
 
 
 ProgressCallback = Callable[[str], None]
@@ -76,7 +77,13 @@ def exec_in_codex_sandbox(
         ]
     )
 
-    result = runner(command, check=False, input=stdin_text, text=stdin_text is not None)
+    result = run_host_command(
+        command,
+        runner=runner,
+        check=False,
+        input=stdin_text,
+        text=stdin_text is not None,
+    )
     return int(result.returncode)
 
 

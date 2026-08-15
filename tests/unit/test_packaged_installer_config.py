@@ -58,6 +58,14 @@ def test_packaged_installer_configure_preserves_nested_linear_defaults(tmp_path:
     fake_bin.mkdir()
     _write_fake_podman(fake_bin / "podman")
     _write_executable(fake_bin / "slirp4netns", "#!/usr/bin/env bash\nexit 0\n")
+    _write_executable(
+        fake_bin / "systemctl",
+        """#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "${LD_LIBRARY_PATH:-<unset>}" > "$AMBER_HOST_ENV_LOG"
+exit 0
+""",
+    )
 
     amber_home = tmp_path / ".amber"
     archive = ROOT / "dist" / "amber-linux-x86_64.tar.gz"
@@ -146,6 +154,29 @@ def test_packaged_installer_configure_preserves_nested_linear_defaults(tmp_path:
         "completed": ["Completed"],
         "canceled": ["Canceled"],
     }
+
+    # PyInstaller may prepend bundled libraries, but host programs must see the
+    # loader path that existed before the frozen process started.
+    host_env_log = tmp_path / "host-env.log"
+    service_env = env.copy()
+    service_env.update(
+        {
+            "AMBER_HOST_ENV_LOG": str(host_env_log),
+            "LD_LIBRARY_PATH": "/synthetic/host/lib",
+        }
+    )
+    service = subprocess.run(
+        [str(amber_home / "bin" / "amber"), "service", "status", "--workspace", "package-test"],
+        cwd=tmp_path,
+        env=service_env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=30,
+    )
+    assert service.returncode == 0, service.stdout + service.stderr
+    assert host_env_log.read_text(encoding="utf-8").strip() == "/synthetic/host/lib"
 
 
 def _write_fake_podman(path: Path) -> None:

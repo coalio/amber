@@ -10,6 +10,7 @@ Utilities are shared support code used across multiple subsystems. Keep this fol
 - `message_archive.py`: process-local recent message archive.
 - `metrics.py`: lightweight metrics registry.
 - `openai.py`: OpenAI response helpers.
+- `process.py`: isolated environment helpers for host subprocesses.
 - `scheduler.py`: process-local timer scheduler.
 - `sleep.py`: sleep-window calculations.
 - `time.py`: UTC and local time helpers.

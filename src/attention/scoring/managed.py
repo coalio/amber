@@ -11,6 +11,7 @@ from typing import Any, TextIO
 from src.attention.constants import DEFAULT_ATTENTION_MODEL, DEFAULT_ATTENTION_MODEL_REVISION
 from src.attention.scoring.policy import AttentionPolicyScorer
 from src.config.config import amber_home, resources_dir
+from src.utils.process import open_host_process
 
 
 class ManagedModernBertInference:
@@ -101,8 +102,9 @@ class ManagedModernBertInference:
             "--cache-dir",
             str(model_cache),
         ]
-        process = subprocess.Popen(
+        process = open_host_process(
             command,
+            opener=subprocess.Popen,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=self._stderr,

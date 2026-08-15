@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if (( BASH_VERSINFO[0] < 4 )); then
+  echo "Amber installer requires Bash 4 or newer." >&2
+  exit 1
+fi
+
 REPO="${AMBER_REPO:-coalio/amber}"
 AMBER_HOME="${AMBER_HOME:-$HOME/.amber}"
 DEFAULT_ASSET_NAME="amber-linux-x86_64.tar.gz"
@@ -14,6 +19,7 @@ PYTORCH_CPU_INDEX_URL="${AMBER_PYTORCH_CPU_INDEX_URL:-https://download.pytorch.o
 PYPI_INDEX_URL="${AMBER_PYPI_INDEX_URL:-https://pypi.org/simple}"
 DEFAULT_ATTENTION_MODEL="MoritzLaurer/ModernBERT-base-zeroshot-v2.0"
 DEFAULT_ATTENTION_MODEL_REVISION="d421c4545a438fd006fb43f8b981c5d908faa1e1"
+MINIMUM_GLIBC_VERSION="2.35"
 WORKSPACE_NAME=""
 RELEASE_ARCHIVE="${AMBER_RELEASE_ARCHIVE:-}"
 RELEASE_URL="${AMBER_RELEASE_URL:-}"
@@ -601,6 +607,18 @@ package_for_command() {
     sed)
       printf 'sed'
       ;;
+    awk)
+      printf 'gawk'
+      ;;
+    getconf)
+      if command -v apt-get >/dev/null 2>&1; then
+        printf 'libc-bin'
+      elif command -v dnf >/dev/null 2>&1; then
+        printf 'glibc-common'
+      else
+        printf 'glibc'
+      fi
+      ;;
     podman)
       printf 'podman'
       ;;
@@ -978,12 +996,12 @@ configure_codex_cgroup_choice() {
 
 preflight_installer() {
   local required_commands=(
-    curl tar mktemp stat find grep sed awk head tr wc cp mv sort cat chmod ln rm mkdir sleep podman slirp4netns
+    curl tar mktemp stat find grep sed awk head tr wc cp mv sort cat chmod ln rm mkdir sleep dirname uname id getconf podman slirp4netns
   )
   local missing=()
   local still_missing=()
   local failures=()
-  local command podman_info podman_help flag
+  local command podman_info podman_help flag kernel architecture glibc_info glibc_version oldest_glibc
   local required_podman_flags=(--userns --network)
 
   info "Checking host prerequisites..."
@@ -998,6 +1016,24 @@ preflight_installer() {
     done < <(collect_missing_commands "${required_commands[@]}")
     if (( ${#still_missing[@]} )); then
       failures+=("Missing required host commands: $(join_words "${still_missing[@]}")")
+    fi
+  fi
+
+  # reject incompatible release targets before downloading an x86_64 glibc artifact
+  kernel="$(uname -s 2>/dev/null || true)"
+  architecture="$(uname -m 2>/dev/null || true)"
+  if [[ "$kernel" != "Linux" || "$architecture" != "x86_64" ]]; then
+    failures+=("Amber's published package requires Linux x86_64; detected $kernel $architecture.")
+  fi
+  if ! command -v getconf >/dev/null 2>&1; then
+    failures+=("Amber's published package requires GNU libc $MINIMUM_GLIBC_VERSION or newer, but 'getconf' is unavailable.")
+  elif ! glibc_info="$(getconf GNU_LIBC_VERSION 2>/dev/null)" || [[ "$glibc_info" != glibc\ * ]]; then
+    failures+=("Amber's published package requires GNU libc $MINIMUM_GLIBC_VERSION or newer.")
+  else
+    glibc_version="${glibc_info#glibc }"
+    oldest_glibc="$(printf '%s\n%s\n' "$MINIMUM_GLIBC_VERSION" "$glibc_version" | sort -V | head -n 1)"
+    if [[ "$oldest_glibc" != "$MINIMUM_GLIBC_VERSION" ]]; then
+      failures+=("Amber's published package requires GNU libc $MINIMUM_GLIBC_VERSION or newer; detected $glibc_version.")
     fi
   fi
 
@@ -1312,6 +1348,14 @@ install_release() {
   mkdir -p "$release_tmp" "$AMBER_HOME/releases" "$AMBER_HOME/bin" "$AMBER_HOME/workspaces"
   run_with_activity_progress "Extracting Amber $tag" tar -xzf "$archive" -C "$release_tmp"
 
+  # prove native loader compatibility before switching the active release symlink
+  chmod +x "$release_tmp/amber"
+  if ! AMBER_HOME="$AMBER_HOME" "$release_tmp/amber" version >/dev/null 2>&1; then
+    error "The Amber $tag package cannot run on this host."
+    error "Verify Linux x86_64, GNU libc $MINIMUM_GLIBC_VERSION or newer, and the documented runtime libraries."
+    exit 1
+  fi
+
   rm -rf "$release_dir"
   mkdir -p "$release_dir"
   run_with_activity_progress "Installing Amber $tag" cp -a "$release_tmp/." "$release_dir/"
@@ -1572,6 +1616,69 @@ configure_workspace() {
   WORKSPACE_CONFIGURED=1
 }
 
+configure_user_manager_environment() {
+  local user_id runtime_dir
+  user_id="$(id -u)"
+  runtime_dir="/run/user/$user_id"
+  if [[ -d "$runtime_dir" ]]; then
+    export XDG_RUNTIME_DIR="$runtime_dir"
+    export DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_dir/bus"
+  else
+    unset XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS
+  fi
+}
+
+user_manager_is_ready() {
+  configure_user_manager_environment
+  systemctl --user show-environment >/dev/null 2>&1
+}
+
+wait_for_user_manager() {
+  local attempt
+  for attempt in {1..10}; do
+    if user_manager_is_ready; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+prepare_user_service_manager() {
+  local user_name
+  user_name="$(id -un)"
+
+  # require systemd only after the user chooses the optional service
+  if ! command -v systemctl >/dev/null 2>&1; then
+    error "The optional user service requires 'systemctl' and a systemd user manager."
+    return 1
+  fi
+
+  # make reboot persistence establish the user manager before amber contacts it
+  if command -v loginctl >/dev/null 2>&1; then
+    info "Enabling user lingering so Amber can start without an interactive login..."
+    if ! loginctl enable-linger "$user_name"; then
+      if ! user_manager_is_ready; then
+        error "Could not enable lingering or reach the systemd user manager."
+        error "Ask an administrator to run: sudo loginctl enable-linger $user_name"
+        return 1
+      fi
+      warn "Could not enable reboot persistence automatically. Run: sudo loginctl enable-linger $user_name"
+    fi
+  elif ! user_manager_is_ready; then
+    error "No systemd user manager is available and 'loginctl' was not found."
+    error "Enable a user session or lingering before installing the service."
+    return 1
+  fi
+
+  if ! wait_for_user_manager; then
+    error "The systemd user manager did not become ready after enabling lingering."
+    error "Verify with: systemctl --user show-environment"
+    return 1
+  fi
+  success "Systemd user manager is ready"
+}
+
 maybe_install_service() {
   local workspace="$1"
   if (( ! WORKSPACE_CONFIGURED )); then
@@ -1584,14 +1691,9 @@ maybe_install_service() {
     return 0
   fi
 
+  prepare_user_service_manager
   run_amber service install --workspace "$workspace" --enable --now
   SERVICE_INSTALLED=1
-  if command -v loginctl >/dev/null 2>&1; then
-    info "Enabling linger lets this user service start after reboot without an interactive login."
-    if ! loginctl enable-linger "$USER"; then
-      warn "Could not enable linger automatically. Run manually if needed: loginctl enable-linger $USER"
-    fi
-  fi
 }
 
 shell_quote() {

@@ -50,3 +50,14 @@ def test_no_color_disables_help_accent(monkeypatch) -> None:
     help_text = cli._build_parser().format_help()
 
     assert "\x1b[" not in help_text
+
+
+def test_workspace_doctor_help_lists_stages_and_repair() -> None:
+    parser = cli._build_parser()
+    workspace_parser = next(action for action in parser._actions if action.dest == "command").choices["workspace"]
+    doctor_parser = next(action for action in workspace_parser._actions if action.dest == "workspace_command").choices["doctor"]
+
+    help_text = doctor_parser.format_help()
+
+    assert "--stage {workspace,podman,container,integrations,service}" in help_text
+    assert "--repair" in help_text

@@ -1502,12 +1502,41 @@ apply_full_install_workspace_overrides() {
   chmod 600 "$config_path" || true
 }
 
+diagnose_codex_container() {
+  local workspace="$1"
+  local doctor_status
+
+  info "Checking the existing Codex sandbox container..."
+  if run_amber workspace doctor "$workspace" --stage container; then
+    success "Codex sandbox container state is healthy"
+    return 0
+  else
+    doctor_status=$?
+  fi
+
+  warn "Amber doctor found an unhealthy Codex sandbox container."
+  if installer_headless || ! installer_is_interactive; then
+    error "Recreate it explicitly, then rerun the installer:"
+    print_amber_command_stderr workspace doctor "$workspace" --stage container --repair
+    return "$doctor_status"
+  fi
+
+  if ! ask_yes_no "Recreate the unhealthy Codex sandbox container now?" "no"; then
+    error "The installer cannot continue while the Codex sandbox is unhealthy."
+    return "$doctor_status"
+  fi
+
+  run_amber workspace doctor "$workspace" --stage container --repair
+  success "Codex sandbox container was recreated and passed Amber doctor"
+}
+
 configure_workspace() {
   local workspace="$1"
   info "Initializing workspace $workspace..."
   run_amber workspace init "$workspace"
   apply_codex_workspace_overrides "$workspace"
   apply_full_install_workspace_overrides "$workspace"
+  diagnose_codex_container "$workspace"
 
   # honor explicit headless mode without probing or consuming terminal input
   if installer_headless; then

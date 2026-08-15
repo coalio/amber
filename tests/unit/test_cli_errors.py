@@ -71,7 +71,7 @@ def test_service_stop_cleans_codex_container_before_systemctl(monkeypatch) -> No
     calls: list[list[str]] = []
 
     monkeypatch.setattr(
-        "src.config.workspace.stop_workspace_codex_containers",
+        "src.config.doctor.stop_workspace_codex_containers",
         lambda workspace: calls.append(["cleanup", workspace]),
     )
 

@@ -13,6 +13,7 @@ from src.cli_input import choice_menu_supported, headless_enabled, read_choice, 
 
 
 CODEX_AUTH_METHODS = ("api-key", "device", "access-token")
+DOCTOR_STAGE_CHOICES = ("workspace", "podman", "container", "integrations", "service")
 HELP_ACCENT = "\033[38;5;218m"
 HELP_RESET = "\033[0m"
 HELP_COMMANDS = {
@@ -164,6 +165,18 @@ def _build_parser() -> argparse.ArgumentParser:
     doctor_parser.add_argument("workspace")
     doctor_parser.add_argument("--external", action="store_true", help="Run external auth checks where possible.")
     doctor_parser.add_argument("--service", action="store_true", help="Include systemd user service status.")
+    doctor_parser.add_argument(
+        "--stage",
+        action="append",
+        choices=DOCTOR_STAGE_CHOICES,
+        dest="doctor_stages",
+        help="Run only this diagnostic stage. Repeat to select multiple stages.",
+    )
+    doctor_parser.add_argument(
+        "--repair",
+        action="store_true",
+        help="Recreate an unhealthy Codex sandbox container, then rerun the selected stages.",
+    )
 
     service_parser = subparsers.add_parser("service", help="Manage the optional systemd user service.")
     service_subparsers = service_parser.add_subparsers(
@@ -208,7 +221,7 @@ async def _run_telegram_app(workspace: str | Path) -> None:
 
 
 def _workspace(args: argparse.Namespace) -> int:
-    from src.config.workspace import doctor_workspace, init_workspace
+    from src.config.workspace import init_workspace
 
     if args.workspace_command == "init":
         path = init_workspace(args.name, overwrite=args.overwrite)
@@ -227,16 +240,48 @@ def _workspace(args: argparse.Namespace) -> int:
                     os.environ["AMBER_HEADLESS"] = previous_headless
         return _configure_workspace(args.workspace)
     if args.workspace_command == "doctor":
-        checks = doctor_workspace(args.workspace, validate_external=args.external, include_service=args.service)
-        return _print_checks(checks)
+        return _doctor_workspace(args)
     raise RuntimeError(f"Unknown workspace command: {args.workspace_command}")
 
 
+def _doctor_workspace(args: argparse.Namespace) -> int:
+    from src.config.doctor import (
+        CODEX_CONTAINER_REPAIR,
+        doctor_workspace,
+        recreate_codex_container,
+    )
+
+    doctor_args = {
+        "validate_external": args.external,
+        "include_service": args.service,
+        "stages": args.doctor_stages,
+    }
+    checks = doctor_workspace(args.workspace, **doctor_args)
+    repairable = any(not check.ok and check.repair == CODEX_CONTAINER_REPAIR for check in checks)
+    status = _print_checks(checks)
+    if not repairable:
+        return status
+    if not args.repair:
+        print(
+            f"Repair available: rerun with `amber workspace doctor {args.workspace} --stage container --repair`.",
+            file=sys.stderr,
+        )
+        return status
+
+    print("[repair] recreating the Codex sandbox container", flush=True)
+    recreate_codex_container(
+        args.workspace,
+        progress_callback=lambda message: print(f"[repair] {message}", flush=True),
+    )
+    print("[repair] rerunning doctor stages", flush=True)
+    return _print_checks(doctor_workspace(args.workspace, **doctor_args))
+
+
 def _service(args: argparse.Namespace) -> int:
+    from src.config.doctor import stop_workspace_codex_containers
     from src.config.workspace import (
         install_user_service,
         service_unit_name,
-        stop_workspace_codex_containers,
         uninstall_user_service,
     )
 
@@ -288,7 +333,8 @@ def _version() -> int:
 
 def _configure_workspace(workspace: str | Path) -> int:
     from src.config.config import get_settings, workspace_dir
-    from src.config.workspace import doctor_workspace, load_workspace_config, write_workspace_config
+    from src.config.doctor import doctor_workspace
+    from src.config.workspace import load_workspace_config, write_workspace_config
 
     resolved = workspace_dir(workspace)
     config_path = resolved / "config.toml"

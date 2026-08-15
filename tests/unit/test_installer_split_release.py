@@ -106,6 +106,7 @@ def test_installer_downloads_split_release_without_full_asset(tmp_path: Path) ->
     assert (tmp_path / ".amber" / "bin" / "amber").resolve() == tmp_path / ".amber" / "releases" / "v0.1.0" / "amber"
     assert fake_log.read_text(encoding="utf-8").splitlines() == [
         "workspace init indiedreamers",
+        "workspace doctor indiedreamers --stage container",
         "workspace configure indiedreamers",
     ]
     assert "codex.progress" not in result.stderr
@@ -290,11 +291,93 @@ def test_installer_headless_uses_defaults_and_skips_interactive_setup(tmp_path: 
     assert "Headless install skipped interactive workspace configuration." in result.stdout
     assert fake_log.read_text(encoding="utf-8").splitlines() == [
         "workspace init indiedreamers",
+        "workspace doctor indiedreamers --stage container",
     ]
     assert curl_log.read_text(encoding="utf-8").splitlines() == [
         "https://api.github.com/repos/coalio/amber/releases/latest",
         "https://downloads.example/amber-linux-x86_64.tar.gz",
     ]
+
+
+def test_installer_uses_doctor_to_offer_container_recreation(tmp_path: Path) -> None:
+    archive = _make_release_archive(tmp_path)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _add_fake_installer_prereqs(fake_bin)
+    tty = tmp_path / "tty"
+    tty.write_text("\ny\n\n\n", encoding="utf-8")
+    fake_log = tmp_path / "amber.log"
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "AMBER_FAKE_DOCTOR_FAIL": "1",
+            "AMBER_FAKE_LOG": str(fake_log),
+            "AMBER_HOME": str(tmp_path / ".amber"),
+            "AMBER_RELEASE_ARCHIVE": str(archive),
+            "AMBER_RELEASE_TAG": "local",
+            "AMBER_TTY": str(tty),
+            "PATH": f"{fake_bin}:{env['PATH']}",
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", "installer/install.sh", "indiedreamers"],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert fake_log.read_text(encoding="utf-8").splitlines() == [
+        "workspace init indiedreamers",
+        "workspace doctor indiedreamers --stage container",
+        "workspace doctor indiedreamers --stage container --repair",
+        "workspace configure indiedreamers",
+    ]
+    assert "Codex sandbox container was recreated and passed Amber doctor" in result.stdout
+
+
+def test_headless_installer_does_not_recreate_an_unhealthy_container(tmp_path: Path) -> None:
+    archive = _make_release_archive(tmp_path)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _add_fake_installer_prereqs(fake_bin)
+    fake_log = tmp_path / "amber.log"
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "AMBER_FAKE_DOCTOR_FAIL": "1",
+            "AMBER_FAKE_LOG": str(fake_log),
+            "AMBER_HOME": str(tmp_path / ".amber"),
+            "AMBER_RELEASE_ARCHIVE": str(archive),
+            "AMBER_RELEASE_TAG": "local",
+            "PATH": f"{fake_bin}:{env['PATH']}",
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", "installer/install.sh", "--headless", "indiedreamers"],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode != 0
+    assert fake_log.read_text(encoding="utf-8").splitlines() == [
+        "workspace init indiedreamers",
+        "workspace doctor indiedreamers --stage container",
+    ]
+    assert "workspace doctor indiedreamers --stage container --repair" in result.stderr
 
 
 def test_installer_can_install_full_modernbert_release(tmp_path: Path) -> None:
@@ -1102,6 +1185,10 @@ def _make_release_archive(tmp_path: Path) -> Path:
             podman_cgroup_manager = "none"
             enforce_resource_limits = true
             CONFIG
+            fi
+            if [[ "${1:-}" == "workspace" && "${2:-}" == "doctor" \
+              && "${AMBER_FAKE_DOCTOR_FAIL:-}" == "1" && "$*" != *"--repair"* ]]; then
+              exit 1
             fi
             if [[ "${1:-}" == "workspace" && "${2:-}" == "configure" && -n "${AMBER_FAKE_ENV_LOG:-}" ]]; then
               printf 'AMBER_CODEX_CGROUP_MANAGER=%s\\n' "${AMBER_CODEX_CGROUP_MANAGER:-}" >> "$AMBER_FAKE_ENV_LOG"

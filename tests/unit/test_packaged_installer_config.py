@@ -161,6 +161,9 @@ if [[ "${1:-}" == "run" && "${2:-}" == "--help" ]]; then
   printf '%s\n' '--userns --network --cgroups --memory --cpus --pids-limit'
   exit 0
 fi
+if [[ "${1:-}" == "container" && "${2:-}" == "exists" ]]; then
+  exit 1
+fi
 if [[ "${1:-}" == "inspect" ]]; then
   printf '%s\n' 'amber-codex-sandbox:ubuntu-24.04-codex-cli'
   exit 0

@@ -16,7 +16,11 @@ Important environment variables:
 
 ## Workspaces
 
-`workspace.py` creates workspace directories, copies editable prompts and Codex skills, writes initial config, renders systemd user units, and runs workspace doctor checks.
+`workspace.py` creates workspace directories, copies editable prompts and Codex skills, writes initial config, and renders systemd user units. `doctor.py` owns workspace diagnostics and Codex container repair.
+
+Doctor diagnostics are an ordered `DOCTOR_PIPELINE` of independent `DoctorStage` entries. Stages use the `workspace`, `podman`, `container`, `integrations`, and `service` scopes and share only the accumulated `DoctorContext`. Add a new symptom by implementing a stage runner and appending its `DoctorStage` to the pipeline; CLI scope selection and result rendering do not need new orchestration code.
+
+Container stages distinguish an absent on-demand container from an unhealthy existing one. They verify Podman execution, bind-mount identity, the default working directory, and the Codex app-server health response. Repairable failures carry the `recreate-codex-container` action consumed by `workspace doctor --repair`.
 
 Workspace-owned files are intended to be user-editable. Release-level `system/` prompts are shipped with the release because they must track runtime behavior.
 

@@ -4,8 +4,8 @@ import subprocess
 
 from src.ai.semantic.config import SemanticConfig
 from src.config.config import get_settings
+from src.config.doctor import doctor_workspace
 from src.config.workspace import (
-    doctor_workspace,
     init_workspace,
     install_user_service,
     load_workspace_config,
@@ -157,11 +157,13 @@ def test_workspace_doctor_reports_codex_podman_prerequisites(monkeypatch, tmp_pa
                 stdout="--userns --network --cgroups --memory --cpus --pids-limit\n",
                 stderr="",
             )
+        if command[:3] == ["podman", "container", "exists"]:
+            return subprocess.CompletedProcess(command, 1, stdout="", stderr="")
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("src.config.workspace.shutil.which", fake_which)
-    monkeypatch.setattr("src.config.workspace.subprocess.run", fake_run)
-    monkeypatch.setattr("src.config.workspace._local_cgroup_v2_detail", lambda: (True, "/sys/fs/cgroup is cgroup2fs"))
+    monkeypatch.setattr("src.config.doctor.shutil.which", fake_which)
+    monkeypatch.setattr("src.config.doctor.subprocess.run", fake_run)
+    monkeypatch.setattr("src.config.doctor._local_cgroup_v2_detail", lambda: (True, "/sys/fs/cgroup is cgroup2fs"))
 
     checks = {check.name: check for check in doctor_workspace("indiedreamers", validate_external=True)}
 

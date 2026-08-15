@@ -32,7 +32,7 @@ Run the installer with the workspace name you want to create:
 curl -fsSL https://raw.githubusercontent.com/coalio/amber/master/installer/install.sh | bash -s -- my-workspace
 ```
 
-This checks host prerequisites, lets you choose Standard heuristic scoring or Full ModernBERT scoring, asks before reusing cached or recovered packages, downloads the latest GitHub release when needed, installs Amber under `~/.amber`, creates `~/.amber/workspaces/my-workspace`, asks how to handle Codex sandbox cgroup/resource-limit probes, runs interactive authentication if you choose to configure the workspace immediately, and asks whether to install the optional user service.
+This checks host prerequisites, lets you choose Standard heuristic scoring or Full ModernBERT scoring, asks before reusing cached or recovered packages, downloads the latest GitHub release when needed, installs Amber under `~/.amber`, creates `~/.amber/workspaces/my-workspace`, asks how to handle Codex sandbox cgroup/resource-limit probes, uses Amber doctor to detect and offer to recreate an unhealthy existing sandbox container, runs interactive authentication if you choose to configure the workspace immediately, and asks whether to install the optional user service.
 
 Standard stays self-contained and does not install any ML dependencies. Full additionally creates `~/.amber/ml-runtime`, installs CPU-only PyTorch and Transformers from their maintainers, caches the pinned ModernBERT checkpoint under `~/.amber/models`, and enables `attention.scorer = "modernbert"` for the new workspace.
 
@@ -55,6 +55,15 @@ Check the workspace before starting the agent:
 ```bash
 ~/.amber/bin/amber workspace doctor my-workspace --external --service
 ```
+
+Doctor checks run as ordered stages. To diagnose only the Podman-backed sandbox, or explicitly recreate it when a failed check offers that repair, run:
+
+```bash
+~/.amber/bin/amber workspace doctor my-workspace --stage container
+~/.amber/bin/amber workspace doctor my-workspace --stage container --repair
+```
+
+Container repair preserves bind-mounted workspace data and does not enable Amber's optional user service.
 
 Run Amber in the foreground:
 

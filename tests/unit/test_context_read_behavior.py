@@ -80,6 +80,30 @@ def test_context_attaches_visible_read_metadata_when_pending_frame_surfaces(tmp_
     assert session.frame_in_flight is True
 
 
+def test_zero_idle_timeout_can_expire_during_scheduling_without_logging_race(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context_layer = _build_context_layer(tmp_path)
+    session = ConversationSession(
+        session_id="sess_immediate_expiry",
+        chat_id=1001001001,
+        last_updated_at=utc_now(),
+    )
+    context_layer._active_session = session
+    monkeypatch.setattr(context_layer, "_random_idle_timeout_seconds", lambda: 0.0)
+
+    def expire_immediately(_key, _delay, callback, *args) -> None:
+        callback(*args)
+
+    monkeypatch.setattr(context_layer._scheduler, "schedule_after", expire_immediately)
+
+    context_layer._refresh_idle_expiry(session, trigger_message_id=412, reason="test")
+
+    assert context_layer._active_session is None
+    assert session.idle_expire_at is None
+
+
 def test_context_marks_always_surface_frames_response_required(tmp_path) -> None:
     context_layer = _build_context_layer(tmp_path)
 

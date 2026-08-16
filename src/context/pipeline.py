@@ -696,7 +696,8 @@ class ContextLayer:
     ) -> None:
         now = now or utc_now()
         delay_seconds = self._random_idle_timeout_seconds()
-        session.idle_expire_at = now + timedelta(seconds=delay_seconds)
+        idle_expire_at = now + timedelta(seconds=delay_seconds)
+        session.idle_expire_at = idle_expire_at
         self._scheduler.schedule_after(
             f"context_expire:{session.session_id}",
             delay_seconds,
@@ -713,7 +714,7 @@ class ContextLayer:
                     "trigger_message_id": trigger_message_id or session.latest_trigger_message_id,
                     "reason": reason,
                     "delay_seconds": round(delay_seconds, 3),
-                    "idle_expire_at": session.idle_expire_at.isoformat(),
+                    "idle_expire_at": idle_expire_at.isoformat(),
                 },
             },
         )

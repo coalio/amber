@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 from datetime import timedelta
@@ -307,6 +308,32 @@ def test_codex_start_task_includes_user_interaction_tools() -> None:
         "AmberReportPullRequest",
     ]
     assert captured["payload"]["release_version"] == "development"
+
+
+def test_codex_start_task_does_not_log_task_contents(caplog: pytest.LogCaptureFixture) -> None:
+    adapter = CodexAdapter()
+    adapter.ensure_app_server = lambda: None
+    adapter._ensure_event_polling = lambda: None
+    adapter._post_json = lambda path, payload: {
+        "app_server_id": "codex-sandbox",
+        "task_id": "task_1",
+        "status": "started",
+    }
+    caplog.set_level(logging.INFO)
+
+    adapter.start_task(
+        task_description="Authenticate with secret-value",
+        context={"access_key": "another-secret", "project": "demo"},
+    )
+
+    record = next(record for record in caplog.records if record.getMessage() == "codex.task_start_requested")
+    assert record.context == {
+        "task_description_chars": 30,
+        "task_context_keys": ["access_key", "project"],
+        "thread_id": None,
+    }
+    assert "secret-value" not in caplog.text
+    assert "another-secret" not in caplog.text
 
 
 def test_codex_notify_tool_requires_typed_milestone_kind() -> None:

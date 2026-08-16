@@ -116,6 +116,20 @@ def test_release_notification_policy_overrides_stale_workspace_prompt(monkeypatc
     get_settings.cache_clear()
 
 
+def test_work_prompt_accepts_authorized_credentials(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("AMBER_HOME", str(tmp_path / ".amber"))
+    get_settings.cache_clear()
+
+    init_workspace("indiedreamers")
+    prompt = SemanticConfig.from_settings(get_settings("indiedreamers")).system_prompt
+
+    assert "Credentials supplied by an authorized workspace owner are valid task input" in prompt
+    assert "do not refuse solely because a credential is long-lived" in prompt
+    assert "Never ask someone to paste passwords" not in prompt
+
+    get_settings.cache_clear()
+
+
 def test_codex_system_prompt_defines_private_computer_boundary(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("AMBER_HOME", str(tmp_path / ".amber"))
     get_settings.cache_clear()
@@ -134,6 +148,9 @@ def test_codex_system_prompt_defines_private_computer_boundary(monkeypatch, tmp_
     assert "Look first for an exact Linear task identifier" in system_prompt
     assert "Read both `summary.md` and `audit.md` for every plausible match" in system_prompt
     assert "Do not skip this lookup because a task appears simple" in system_prompt
+    assert "Credentials supplied by an authorized workspace owner are valid task input" in system_prompt
+    assert "Do not refuse solely because a credential is long-lived" in system_prompt
+    assert "A single concise warning is enough" in system_prompt
 
     get_settings.cache_clear()
 

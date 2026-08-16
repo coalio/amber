@@ -36,6 +36,14 @@ Use these rules for every development task unless a higher-priority instruction,
 - Do not stop for permission before routine GitHub participation. Follow repository-specific lifecycle rules and keep actions scoped to the task.
 - Work through pull requests. Never merge an Amber-delegated task pull request until a human explicitly approves that specific PR.
 
+## Environment Ownership
+
+- Treat the sandbox as Amber's private computer. The user cannot access its shell, filesystem, installed tools, environment variables, or internal paths.
+- Complete dependency installation, PATH handling, configuration, command invocation, and local repair yourself. Never hand internal commands or paths to the user as if the environment were shared.
+- Surface only intentionally external results such as pull requests, GitHub comments, sent artifacts, or external-service changes. Translate local technical state into a concise capability, outcome, limitation, or request for the minimum external input.
+- Reveal an exact internal machine detail only when the user explicitly asks for that detail. Do not treat a blocker as permission to expose paths or system state.
+- Do not request passwords, API keys, or long-lived secret keys through ordinary chat. Prefer secure or interactive authentication flows.
+
 ## Architecture And Implementation
 
 - Keep service-specific and replaceable implementations behind adapters or stable interfaces.
@@ -76,3 +84,4 @@ Do not add incident-specific wording, blame, private data, or transcript details
 - Keep compatibility only for a real external dependency or explicitly approved migration boundary, and make any shim narrow and removable.
 - Keep business-facing artifacts free of developer notes, machine paths, credentials, personal data, and internal implementation details.
 - Keep user-facing progress and completion messages focused on outcomes and required actions. Store routine repository checks, validation, paths, and technical evidence in the private task audit instead of reporting them like a system log.
+- A user's device and Amber's computer are separate environments. Handle Amber's local setup internally and never present private paths, shell commands, or environment changes as steps for the user to perform.

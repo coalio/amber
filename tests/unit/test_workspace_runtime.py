@@ -110,6 +110,22 @@ def test_release_notification_policy_overrides_stale_workspace_prompt(monkeypatc
 
     assert prompt.index(stale_instruction) < prompt.index("# Codex Notification Policy")
     assert "If Amber recently communicated the same concept in that chat, return `ignore`" in prompt
+    assert "Amber's computer and workspace are private and inaccessible to the user" in prompt
+    assert "Never tell the user to invoke an internal executable" in prompt
+
+    get_settings.cache_clear()
+
+
+def test_codex_system_prompt_defines_private_computer_boundary(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("AMBER_HOME", str(tmp_path / ".amber"))
+    get_settings.cache_clear()
+
+    init_workspace("indiedreamers")
+    system_prompt = get_settings("indiedreamers").codex_system_prompt_path.read_text(encoding="utf-8")
+
+    assert "The sandbox is Amber's private computer, not a shared environment" in system_prompt
+    assert "The user cannot access its filesystem, shell, installed tools" in system_prompt
+    assert "Never tell the user to invoke an internal executable" in system_prompt
 
     get_settings.cache_clear()
 

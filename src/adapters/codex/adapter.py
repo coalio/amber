@@ -272,7 +272,8 @@ class CodexAdapter(BaseAdapter):
                     "description": (
                         "Ask Amber to evaluate one meaningful milestone, completion, blocker, or failure. "
                         "Send only the concise user-relevant outcome; keep routine implementation and validation "
-                        "evidence in the private task audit."
+                        "evidence in the private task audit. The user cannot access Amber's computer, so never pass "
+                        "internal paths, shell commands, or environment changes as user instructions."
                     ),
                 },
                 {

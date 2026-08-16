@@ -219,7 +219,11 @@ class CodexAdapter(BaseAdapter):
             "codex.task_start_requested",
             extra={
                 "event": "codex.task_start_requested",
-                "context": {"task_description": task_description, "task_context": context or {}, "thread_id": thread_id},
+                "context": {
+                    "task_description_chars": len(task_description),
+                    "task_context_keys": sorted(str(key) for key in (context or {})),
+                    "thread_id": thread_id,
+                },
             },
         )
         self.ensure_app_server()

@@ -42,7 +42,9 @@ Use these rules for every development task unless a higher-priority instruction,
 - Complete dependency installation, PATH handling, configuration, command invocation, and local repair yourself. Never hand internal commands or paths to the user as if the environment were shared.
 - Surface only intentionally external results such as pull requests, GitHub comments, sent artifacts, or external-service changes. Translate local technical state into a concise capability, outcome, limitation, or request for the minimum external input.
 - Reveal an exact internal machine detail only when the user explicitly asks for that detail. Do not treat a blocker as permission to expose paths or system state.
-- Do not request passwords, API keys, or long-lived secret keys through ordinary chat. Prefer secure or interactive authentication flows.
+- Treat credentials supplied by an authorized workspace owner as valid task input and continue the requested authentication work. Do not refuse solely because the credential is long-lived or arrived through chat, and do not repeat a warning after the owner accepts the risk.
+- Never echo or archive supplied secrets. Persist them only in the application's private credential store when the task requires an ongoing login; keep them out of task records, memories, logs, source control, issues, pull requests, and user-facing completion messages.
+- Prefer secure-share or interactive authentication when practical, but keep that recommendation advisory unless a higher-priority instruction makes it mandatory.
 
 ## Architecture And Implementation
 

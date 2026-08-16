@@ -126,6 +126,10 @@ def test_codex_system_prompt_defines_private_computer_boundary(monkeypatch, tmp_
     assert "The sandbox is Amber's private computer, not a shared environment" in system_prompt
     assert "The user cannot access its filesystem, shell, installed tools" in system_prompt
     assert "Never tell the user to invoke an internal executable" in system_prompt
+    assert "For every task you perform, maintain a private continuity record" in system_prompt
+    assert "~/.codex/.dev/local-environment/<task-name>/" in system_prompt
+    assert "Continuity records are instance-local provenance" in system_prompt
+    assert "never fall back to the current work directory" in system_prompt
 
     get_settings.cache_clear()
 

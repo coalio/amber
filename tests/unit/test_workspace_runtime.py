@@ -130,6 +130,10 @@ def test_codex_system_prompt_defines_private_computer_boundary(monkeypatch, tmp_
     assert "~/.codex/.dev/local-environment/<task-name>/" in system_prompt
     assert "Continuity records are instance-local provenance" in system_prompt
     assert "never fall back to the current work directory" in system_prompt
+    assert "Before starting every task, inspect the relevant continuity archive" in system_prompt
+    assert "Look first for an exact Linear task identifier" in system_prompt
+    assert "Read both `summary.md` and `audit.md` for every plausible match" in system_prompt
+    assert "Do not skip this lookup because a task appears simple" in system_prompt
 
     get_settings.cache_clear()
 

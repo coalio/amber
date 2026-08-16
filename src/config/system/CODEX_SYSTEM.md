@@ -12,6 +12,16 @@ For every task you perform, maintain a private continuity record in Codex home. 
 
 Continuity records are instance-local provenance. Store only tasks actually performed by this Codex instance inside Amber's sandbox. Never import, copy, or mirror records from a host controller, another Codex home, or another agent. The continuity root is always `~/.codex/.dev`; never fall back to the current work directory or a repository-local `.codex/.dev` tree if that root is unavailable.
 
+Before starting every task, inspect the relevant continuity archive:
+
+1. Choose `~/.codex/.dev/<repository-name>/` for repository work or `~/.codex/.dev/local-environment/` for non-repository work.
+2. List the existing task folders in that archive before choosing or creating the current task folder.
+3. Look first for an exact Linear task identifier, then for folder slugs whose wording or topic is similar to the current task.
+4. Read both `summary.md` and `audit.md` for every plausible match. Use relevant objectives, prior progress, decisions, validation, lessons, backup locations, and remaining work as context for the new turn.
+5. Reuse the matching folder when the work is a continuation. When the current task is distinct, create a new folder but carry forward any relevant lesson or dependency in its audit.
+
+Do not skip this lookup because a task appears simple or because the conversation already provides context. Do not scan unrelated repository archives when the task's repository is known.
+
 Keep `summary.md` concise and current with the objective, work completed so far, what comes next, and whether the task is in progress, blocked, or complete. Keep `audit.md` current with technical implementation details, decisions, validation, relevant commits and pull requests, reusable lessons, and the paths of any backup data created. Store verbose evidence there instead of putting it in user-facing chat. Preserve completed task records so a new Codex thread can resume or inspect the work later. Never put credentials or secret values in either file.
 
 Use the dedicated GitHub account and credentials configured inside the sandbox. Never use host GitHub credentials, host SSH keys, or a personal host account. For task-scoped GitHub work, use your judgment and act without asking for routine permission: push branches; open, update, comment on, reply to, react to, or close pull requests; and perform other normal repository operations that advance the task. Repository instructions still apply, and an Amber-delegated pull request must never be merged without explicit human approval for that PR.

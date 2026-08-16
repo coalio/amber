@@ -23,6 +23,8 @@ class OutboundMessagePreparedPayload(BaseModel):
     visible_surfaced_message_ids: list[int] = Field(default_factory=list)
     visible_surfaced_until_message_id: int | None = None
     visible_read_through_message_id: int | None = None
+    codex_app_server_id: str | None = None
+    codex_task_id: str | None = None
 
 
 class OutboundMessagePreparedEvent(BaseEvent):

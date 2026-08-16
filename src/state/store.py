@@ -9,6 +9,8 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from src.state.models import (
+    CodexOutboundMessageLink,
+    CodexTaskLink,
     ConversationIgnoreRule,
     GlobalState,
     LinearQueuedTask,
@@ -22,6 +24,8 @@ from src.utils.time import local_now, utc_now
 _UNSET = object()
 _LINEAR_BUSY_STATUSES = {"codex_running", "waiting_for_user", "under_review"}
 _LINEAR_TERMINAL_STATUSES = {"completed", "skipped", "error"}
+_CODEX_TASK_LINK_LIMIT = 100
+_CODEX_OUTBOUND_LINK_LIMIT = 20
 
 
 class GlobalStateStore:
@@ -138,6 +142,120 @@ class GlobalStateStore:
         with self._lock:
             self._state.delivery_state.update(payload)
             self._persist(self._state)
+
+    def remember_codex_task(self, *, app_server_id: str, task_id: str, updated_at: datetime) -> CodexTaskLink:
+        key = _codex_task_key(app_server_id, task_id)
+        with self._lock:
+            existing = self._state.codex_tasks.get(key)
+            task = self._codex_task_link(existing, app_server_id=app_server_id, task_id=task_id, updated_at=updated_at)
+            self._state.codex_tasks[key] = task
+            self._prune_codex_tasks_locked()
+            self._persist(self._state)
+            return task.model_copy(deep=True)
+
+    def bind_codex_task_outbound(
+        self,
+        *,
+        app_server_id: str,
+        task_id: str,
+        chat_id: int | str,
+        message_ids: list[int],
+        updated_at: datetime,
+    ) -> CodexTaskLink:
+        key = _codex_task_key(app_server_id, task_id)
+        with self._lock:
+            existing = self._state.codex_tasks.get(key)
+            # Keep every chunk of an Amber reply linked without duplicating retries.
+            links = list(existing.outbound_messages) if existing is not None else []
+            linked_ids = {(str(link.chat_id), link.message_id) for link in links}
+            for message_id in message_ids:
+                link_key = (str(chat_id), message_id)
+                if link_key in linked_ids:
+                    continue
+                links.append(CodexOutboundMessageLink(chat_id=chat_id, message_id=message_id))
+                linked_ids.add(link_key)
+            task = self._codex_task_link(
+                existing,
+                app_server_id=app_server_id,
+                task_id=task_id,
+                updated_at=updated_at,
+                outbound_messages=links[-_CODEX_OUTBOUND_LINK_LIMIT:],
+            )
+            self._state.codex_tasks[key] = task
+            self._prune_codex_tasks_locked()
+            self._persist(self._state)
+            return task.model_copy(deep=True)
+
+    def mark_codex_task_turn(
+        self,
+        *,
+        app_server_id: str,
+        task_id: str,
+        thread_id: str | None,
+        turn_id: str | None,
+        status: str,
+        updated_at: datetime,
+    ) -> CodexTaskLink:
+        key = _codex_task_key(app_server_id, task_id)
+        with self._lock:
+            existing = self._state.codex_tasks.get(key)
+            task = self._codex_task_link(
+                existing,
+                app_server_id=app_server_id,
+                task_id=task_id,
+                updated_at=updated_at,
+                thread_id=thread_id or (existing.thread_id if existing is not None else None),
+                turn_id=turn_id or (existing.turn_id if existing is not None else None),
+                status=status,
+            )
+            self._state.codex_tasks[key] = task
+            self._prune_codex_tasks_locked()
+            self._persist(self._state)
+            return task.model_copy(deep=True)
+
+    def codex_task_for_outbound_message(self, *, chat_id: int | str, message_id: int) -> CodexTaskLink | None:
+        with self._lock:
+            matches = [
+                task
+                for task in self._state.codex_tasks.values()
+                if any(str(link.chat_id) == str(chat_id) and link.message_id == message_id for link in task.outbound_messages)
+            ]
+            if not matches:
+                return None
+            return max(matches, key=lambda task: task.updated_at).model_copy(deep=True)
+
+    def _prune_codex_tasks_locked(self) -> None:
+        if len(self._state.codex_tasks) <= _CODEX_TASK_LINK_LIMIT:
+            return
+        retained = sorted(self._state.codex_tasks.items(), key=lambda item: item[1].updated_at, reverse=True)
+        self._state.codex_tasks = dict(retained[:_CODEX_TASK_LINK_LIMIT])
+
+    def _codex_task_link(
+        self,
+        existing: CodexTaskLink | None,
+        *,
+        app_server_id: str,
+        task_id: str,
+        updated_at: datetime,
+        thread_id: str | None = None,
+        turn_id: str | None = None,
+        status: str | None = None,
+        outbound_messages: list[CodexOutboundMessageLink] | None = None,
+    ) -> CodexTaskLink:
+        # Merge partial lifecycle events without losing identifiers learned earlier.
+        return CodexTaskLink(
+            app_server_id=app_server_id,
+            task_id=task_id,
+            thread_id=thread_id if thread_id is not None else (existing.thread_id if existing is not None else None),
+            turn_id=turn_id if turn_id is not None else (existing.turn_id if existing is not None else None),
+            status=status if status is not None else (existing.status if existing is not None else "running"),
+            outbound_messages=(
+                list(outbound_messages)
+                if outbound_messages is not None
+                else (list(existing.outbound_messages) if existing is not None else [])
+            ),
+            updated_at=updated_at,
+        )
 
     def remember_pending_interruption(
         self,
@@ -643,6 +761,10 @@ def _optional_int(value: Any) -> int | None:
 
 def _codex_question_key(app_server_id: str, task_id: str, tool_call_id: str) -> str:
     return f"{app_server_id}:{task_id}:{tool_call_id}"
+
+
+def _codex_task_key(app_server_id: str, task_id: str) -> str:
+    return f"{app_server_id}:{task_id}"
 
 
 def _is_explicit_project(project: str | None) -> bool:

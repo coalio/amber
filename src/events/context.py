@@ -76,6 +76,17 @@ class CodexNotificationFramePayload(BaseModel):
     candidate_conversations: list[CodexCandidateConversationPayload] = Field(default_factory=list)
 
 
+class CodexFollowupFramePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    app_server_id: str
+    task_id: str
+    codex_thread_id: str | None = None
+    codex_turn_id: str | None = None
+    status: str
+    linked_message_id: int
+
+
 class LinearTaskListFramePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -112,6 +123,7 @@ class ContextFramePayload(BaseModel):
     open_question: OpenQuestionPayload | None = None
     open_questions: list[OpenQuestionPayload] = Field(default_factory=list)
     codex_notification: CodexNotificationFramePayload | None = None
+    codex_followup: CodexFollowupFramePayload | None = None
     linear_task_list: LinearTaskListFramePayload | None = None
     frame_created_at: datetime | None = None
     visible_read_not_before: datetime | None = None

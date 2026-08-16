@@ -348,6 +348,14 @@ def test_codex_notify_tool_requires_typed_milestone_kind() -> None:
     }
 
 
+def test_codex_question_tool_allows_required_operational_input() -> None:
+    question_tool = next(tool for tool in codex_app_server._dynamic_tools() if tool["name"] == "AmberAskUserQuestion")
+
+    assert "authorization code" in question_tool["description"]
+    assert "exact external URL" in question_tool["description"]
+    assert any("required external value" in reason for reason in codex_app_server.CLARIFICATION_POLICY["ask_when"])
+
+
 def test_codex_task_lifecycle_handler_uses_pr_events_for_linear_status(tmp_path: Path) -> None:
     EventBus.reset_for_tests()
     state_store = GlobalStateStore(tmp_path / "state.json", "UTC")

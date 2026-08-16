@@ -142,6 +142,79 @@ def test_codex_candidate_histories_are_recent_and_isolated_by_chat(tmp_path) -> 
     assert all(message.source == "codex_candidate_history" for item in conversations for message in item.recent_messages)
 
 
+def test_context_uses_visible_conversation_to_attach_persisted_codex_followup(tmp_path) -> None:
+    archive = MessageArchive.instance()
+    state_path = tmp_path / "runtime_state_followup.json"
+    state_store = GlobalStateStore(state_path, "America/Managua")
+    state_store.bind_codex_task_outbound(
+        app_server_id="codex-sandbox",
+        task_id="task-auth",
+        chat_id=1001001001,
+        message_ids=[415],
+        updated_at=utc_now(),
+    )
+    state_store.mark_codex_task_turn(
+        app_server_id="codex-sandbox",
+        task_id="task-auth",
+        thread_id="thread-auth",
+        turn_id="turn-install",
+        status="completed",
+        updated_at=utc_now(),
+    )
+    reloaded_state = GlobalStateStore(state_path, "America/Managua")
+    context_layer = ContextLayer(
+        ContextConfig(
+            debounce_seconds=0.0,
+            idle_timeout_seconds=60.0,
+            competing_chat_timeout_seconds=15.0,
+            recent_message_budget=8,
+            max_compacted_facts=6,
+            disable_sleep_state=True,
+            conversation_window_before=5,
+            conversation_window_after=0,
+        ),
+        reloaded_state,
+        RuntimeScheduler.instance(),
+        archive,
+        MemoryStore(tmp_path / "memories_followup"),
+        "America/Managua",
+    )
+    messages = [
+        _telegram_message(415, "amber-self", "amber", "send the connection settings", is_self=True),
+        _telegram_message(
+            416,
+            "user-a",
+            "Fixture User",
+            "use the remote flow",
+            reply_to_message_id=415,
+            reply_to_sender_id="amber-self",
+            reply_to_sender_name="amber",
+            reply_to_content="send the connection settings",
+        ),
+        _telegram_message(417, "amber-self", "amber", "which profile and region?", is_self=True),
+        _telegram_message(418, "user-a", "Fixture User", "fixture-profile and example-region-1"),
+    ]
+    for message in messages:
+        archive.put(message)
+    current = context_layer._convert_archived_message(messages[-1], source="surface")
+    session = ConversationSession(
+        session_id="sess_codex_followup",
+        chat_id=1001001001,
+        last_updated_at=utc_now(),
+        recent_messages=[current],
+        participant_names={"user-a": "Fixture User"},
+        engaged_user_ids={"user-a"},
+        latest_trigger_message_id=418,
+    )
+
+    frame = context_layer._build_frame_event(session).payload
+
+    assert frame.codex_followup is not None
+    assert frame.codex_followup.task_id == "task-auth"
+    assert frame.codex_followup.codex_thread_id == "thread-auth"
+    assert frame.codex_followup.linked_message_id == 415
+
+
 def _telegram_message(
     message_id: int,
     sender_id: str,

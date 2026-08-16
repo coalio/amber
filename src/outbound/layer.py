@@ -41,6 +41,8 @@ class OutboundPreparationLayer:
                             visible_surfaced_message_ids=list(payload.visible_surfaced_message_ids),
                             visible_surfaced_until_message_id=payload.visible_surfaced_until_message_id,
                             visible_read_through_message_id=payload.visible_read_through_message_id,
+                            codex_app_server_id=payload.codex_app_server_id,
+                            codex_task_id=payload.codex_task_id,
                         ),
                     )
                 )
@@ -76,6 +78,8 @@ class OutboundPreparationLayer:
                     visible_surfaced_message_ids=list(payload.visible_surfaced_message_ids),
                     visible_surfaced_until_message_id=payload.visible_surfaced_until_message_id,
                     visible_read_through_message_id=payload.visible_read_through_message_id,
+                    codex_app_server_id=payload.codex_app_server_id,
+                    codex_task_id=payload.codex_task_id,
                 ),
             )
         )

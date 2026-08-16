@@ -83,6 +83,44 @@ def test_action_types_and_sends_each_chunk_sequentially(tmp_path, monkeypatch: p
     assert sleep_calls == [0.5, 0.5]
 
 
+def test_action_persists_codex_task_provenance_for_sent_messages(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("src.action.telegram.layer.random.uniform", lambda _low, _high: 0.0)
+    state_store = GlobalStateStore(tmp_path / "runtime_state_codex_link.json", "America/Managua")
+    layer = ActionLayer(
+        ActionConfig(
+            enable_real_delays=False,
+            disable_sleep_state=True,
+            transport_max_retries=1,
+            transport_retry_delay_seconds=2.0,
+        ),
+        RecordingTransport(),
+        state_store,
+        RuntimeScheduler.instance(),
+        MessageArchive.instance(),
+        "America/Managua",
+    )
+
+    layer.handle_prepared_message(
+        OutboundMessagePreparedEvent(
+            chat_id=1001001001,
+            payload=OutboundMessagePreparedPayload(
+                chat_id=1001001001,
+                session_id="sess_codex_link",
+                trigger_message_id=412,
+                ordered_messages=["authentication setup is ready for the next input"],
+                reply_to_message_id=411,
+                mood="calm",
+                codex_app_server_id="codex-sandbox",
+                codex_task_id="task-auth",
+            ),
+        )
+    )
+
+    linked = state_store.codex_task_for_outbound_message(chat_id=1001001001, message_id=900001)
+    assert linked is not None
+    assert linked.task_id == "task-auth"
+
+
 def test_typing_duration_adds_only_negative_wpm_variance(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     layer = ActionLayer(
         ActionConfig(

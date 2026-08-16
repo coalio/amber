@@ -155,6 +155,8 @@ class ActionLayer:
                     delivered_at=utc_now(),
                     session_id=payload.session_id,
                     trigger_message_id=payload.trigger_message_id,
+                    codex_app_server_id=payload.codex_app_server_id,
+                    codex_task_id=payload.codex_task_id,
                 )
                 EventBus.emit(OutboundMessageSentEvent(correlation_id=event.correlation_id, chat_id=event.chat_id, payload=delivery))
                 return
@@ -229,6 +231,8 @@ class ActionLayer:
                             delivered_at=utc_now(),
                             session_id=payload.session_id,
                             trigger_message_id=payload.trigger_message_id,
+                            codex_app_server_id=payload.codex_app_server_id,
+                            codex_task_id=payload.codex_task_id,
                         ),
                     )
                 )
@@ -284,19 +288,30 @@ class ActionLayer:
             self._archive_outbound_messages(payload.chat_id, sent_messages, payload.reply_to_message_id, sent_ids)
             if sent_ids:
                 self._state_store.touch_delivery_state({"last_outbound_message_id": sent_ids[-1], "last_outbound_chat_id": payload.chat_id})
+            delivered_at = utc_now()
             delivery = OutboundDeliveryPayload(
                 chat_id=payload.chat_id,
                 reply_to_message_id=payload.reply_to_message_id,
                 ordered_messages=sent_messages,
                 sent_message_ids=sent_ids,
                 no_send=False,
-                delivered_at=utc_now(),
+                delivered_at=delivered_at,
                 session_id=payload.session_id,
                 trigger_message_id=payload.trigger_message_id,
+                codex_app_server_id=payload.codex_app_server_id,
+                codex_task_id=payload.codex_task_id,
                 planned_message_count=len(payload.ordered_messages),
                 interrupted=interruption_message_id is not None,
                 interruption_message_id=interruption_message_id,
             )
+            if payload.codex_app_server_id and payload.codex_task_id and sent_ids:
+                self._state_store.bind_codex_task_outbound(
+                    app_server_id=payload.codex_app_server_id,
+                    task_id=payload.codex_task_id,
+                    chat_id=payload.chat_id,
+                    message_ids=sent_ids,
+                    updated_at=delivered_at,
+                )
             EventBus.emit(OutboundMessageSentEvent(correlation_id=event.correlation_id, chat_id=event.chat_id, payload=delivery))
 
     def _visible_read_key(self, chat_id: int | str, session_id: str | None) -> str:

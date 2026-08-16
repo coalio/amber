@@ -62,6 +62,25 @@ class OpenQuestion(BaseModel):
     status: str = "open"
 
 
+class CodexOutboundMessageLink(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    chat_id: int | str
+    message_id: int
+
+
+class CodexTaskLink(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    app_server_id: str
+    task_id: str
+    thread_id: str | None = None
+    turn_id: str | None = None
+    status: str = "running"
+    outbound_messages: list[CodexOutboundMessageLink] = Field(default_factory=list)
+    updated_at: datetime
+
+
 class LinearQueuedTask(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -153,6 +172,7 @@ class GlobalState(BaseModel):
     recent_self_message_ids: list[int] = Field(default_factory=list)
     pending_interruption: PendingInterruption | None = None
     open_questions: dict[str, OpenQuestion] = Field(default_factory=dict)
+    codex_tasks: dict[str, CodexTaskLink] = Field(default_factory=dict)
     linear_tasks: dict[str, LinearQueuedTask] = Field(default_factory=dict)
     linear_last_emitted_queue_hash: str | None = None
     linear_last_poll_at: datetime | None = None

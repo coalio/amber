@@ -249,6 +249,9 @@ class CodexAdapter(BaseAdapter):
                     "user-facing behavior",
                     "safety constraint",
                     "acceptance criteria",
+                    "required external input",
+                    "credential or authorization code",
+                    "confirmation or approval",
                 ],
                 "default_without_asking": [
                     "filenames",
@@ -258,17 +261,17 @@ class CodexAdapter(BaseAdapter):
                     "small implementation details",
                 ],
                 "interaction_style": (
-                    "Ask Amber one meaningful question at a time, with enough natural task context, "
-                    "and do not provide a fixed user-facing template."
+                    "Ask Amber one meaningful question at a time, with enough natural task context and any exact "
+                    "external URL or prompt the user needs, and do not provide a fixed user-facing template."
                 ),
             },
             "tools": [
                 {
                     "name": "AmberAskUserQuestion",
                     "description": (
-                        "Ask Amber to gather clarification from the appropriate allowlisted person only when "
-                        "the answer could materially change the implementation objective, architecture, "
-                        "integration boundary, user-facing behavior, safety constraints, or acceptance criteria."
+                        "Ask Amber to gather clarification or required external input from the appropriate allowlisted "
+                        "person when the answer could materially change the task or Codex cannot continue without a "
+                        "value, credential, authorization code, confirmation, or approval only the user can provide."
                     ),
                 },
                 {

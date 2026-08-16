@@ -421,7 +421,11 @@ def test_semantic_client_acknowledges_successful_codex_task_start() -> None:
     decision = client.decide(frame)
 
     assert decision.action == "reply"
+    assert decision.work_intent == "delegate"
+    assert decision.codex_task_started is True
     assert decision.reply_to_message_id == 412
+    assert decision.codex_app_server_id == "codex-sandbox"
+    assert decision.codex_task_id == "task_fake"
     # codex start is the behavior; wording can change
     assert isinstance(decision.reply_text, str) and decision.reply_text.strip()
     assert decision.notes

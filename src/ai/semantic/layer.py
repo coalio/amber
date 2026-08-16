@@ -26,6 +26,19 @@ class ConsciousHarness:
         self._config = config
 
     def evaluate(self, frame: ContextFramePayload, decision: SemanticDecisionSchema) -> HarnessFailure | None:
+        if decision.work_intent == "delegate" and not decision.codex_task_started:
+            return HarnessFailure(
+                code="delegated_work_requires_codex_task",
+                reason=(
+                    "The visible conversation asks Amber to do work beyond answering, but no Codex task was "
+                    "started successfully in this turn. Call GetTool for CodexRunTask, call CodexRunTask, and "
+                    "only then acknowledge the work."
+                ),
+                context={
+                    "current_message": self._message_subject(frame.current_message),
+                    "recent_window": self._window_context(frame, decision),
+                },
+            )
         if frame.response_required and decision.action in {"ignore", "sleep"}:
             return HarnessFailure(
                 code="required_response_cannot_be_silent",
@@ -435,8 +448,9 @@ class AILayer:
         else:
             decision.codex_target_sender_id = None
             decision.codex_target_sender_name = None
-            decision.codex_app_server_id = None
-            decision.codex_task_id = None
+            if not decision.codex_task_started:
+                decision.codex_app_server_id = None
+                decision.codex_task_id = None
             decision.codex_tool_call_id = None
             decision.chat_id = frame.chat_id
         if frame.linear_task_list is not None and decision.action == "reply":
@@ -502,6 +516,8 @@ class AILayer:
         notes = [f"interrupt_{decision.interrupt_decision}", decision.reason, *decision.notes]
         return SemanticDecisionSchema(
             action=decision.action,
+            work_intent=decision.work_intent,
+            codex_task_started=decision.codex_task_started,
             reply_to_message_id=decision.reply_to_message_id,
             chat_id=frame.chat_id,
             reply_text=decision.reply_text,
@@ -521,6 +537,8 @@ class AILayer:
             target_memory_sender_id=decision.target_memory_sender_id,
             rewritten_memory_text=decision.rewritten_memory_text,
             rewritten_memory_tags=list(decision.rewritten_memory_tags),
+            codex_app_server_id=decision.codex_app_server_id,
+            codex_task_id=decision.codex_task_id,
             frame_created_at=frame.frame_created_at,
             visible_read_not_before=frame.visible_read_not_before,
             visible_surfaced_message_ids=list(frame.visible_surfaced_message_ids),

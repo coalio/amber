@@ -38,6 +38,14 @@ class CodexTaskLifecycleHandler:
             self._pull_request_subscription_id = None
 
     def _handle_task_completed(self, task_completed: CodexTaskCompleted) -> None:
+        self._state_store.mark_codex_task_turn(
+            app_server_id=task_completed.app_server_id,
+            task_id=task_completed.task_id,
+            thread_id=task_completed.thread_id,
+            turn_id=task_completed.turn_id,
+            status=task_completed.status,
+            updated_at=utc_now(),
+        )
         if task_completed.status not in {"completed", "succeeded"}:
             return
         self._state_store.mark_linear_task_codex_turn(

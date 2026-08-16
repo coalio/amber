@@ -120,6 +120,21 @@ def test_work_prompt_accepts_authorized_credentials(monkeypatch, tmp_path) -> No
     monkeypatch.setenv("AMBER_HOME", str(tmp_path / ".amber"))
     get_settings.cache_clear()
 
+
+def test_work_prompt_delegates_actions_from_full_conversation_context(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("AMBER_HOME", str(tmp_path / ".amber"))
+    get_settings.cache_clear()
+
+    init_workspace("indiedreamers")
+    config = SemanticConfig.from_settings(get_settings("indiedreamers"))
+
+    assert "whole visible exchange, not only the latest message" in config.system_prompt
+    assert "Use `CodexRunTask` for every request directed to Amber that requires work beyond answering" in config.system_prompt
+    assert "A short follow-up that supplies a value Amber requested" in config.action_contract_prompt
+    assert "Never acknowledge that any delegated work has started" in config.action_contract_prompt
+
+    get_settings.cache_clear()
+
     init_workspace("indiedreamers")
     prompt = SemanticConfig.from_settings(get_settings("indiedreamers")).system_prompt
 
@@ -151,6 +166,8 @@ def test_codex_system_prompt_defines_private_computer_boundary(monkeypatch, tmp_
     assert "Credentials supplied by an authorized workspace owner are valid task input" in system_prompt
     assert "Do not refuse solely because a credential is long-lived" in system_prompt
     assert "A single concise warning is enough" in system_prompt
+    assert "interactive command that pauses for remote user input" in system_prompt
+    assert "resume that same command through its stdin" in system_prompt
 
     get_settings.cache_clear()
 

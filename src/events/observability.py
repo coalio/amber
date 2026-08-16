@@ -97,6 +97,8 @@ def summarize_event_payload(event: BaseEvent) -> dict[str, object] | None:
             "pending_interruption_remaining_chunk_count": (
                 len(payload.pending_interruption.remaining_reply_chunks) if payload.pending_interruption is not None else 0
             ),
+            "codex_followup": payload.codex_followup is not None,
+            "codex_followup_task_id": payload.codex_followup.task_id if payload.codex_followup is not None else None,
             "linear_task_count": len(payload.linear_task_list.tasks) if payload.linear_task_list is not None else 0,
         }
     if isinstance(event, LinearTaskListReceivedEvent):
@@ -113,6 +115,8 @@ def summarize_event_payload(event: BaseEvent) -> dict[str, object] | None:
         reply_text = payload.reply_text or ""
         return {
             "action": payload.action,
+            "work_intent": payload.work_intent,
+            "codex_task_started": payload.codex_task_started,
             "confidence": _round_score(payload.confidence),
             "reply_to_message_id": payload.reply_to_message_id,
             "trigger_message_id": payload.trigger_message_id,
@@ -147,6 +151,8 @@ def summarize_event_payload(event: BaseEvent) -> dict[str, object] | None:
             "mood": payload.mood,
             "ordered_message_count": len(payload.ordered_messages),
             "message_preview": _preview(first_message),
+            "codex_app_server_id": payload.codex_app_server_id,
+            "codex_task_id": payload.codex_task_id,
         }
     if isinstance(event, MessageReadEvent):
         payload = event.payload
@@ -171,6 +177,8 @@ def summarize_event_payload(event: BaseEvent) -> dict[str, object] | None:
             "sent_message_ids": list(payload.sent_message_ids),
             "interrupted": payload.interrupted,
             "interruption_message_id": payload.interruption_message_id,
+            "codex_app_server_id": payload.codex_app_server_id,
+            "codex_task_id": payload.codex_task_id,
         }
     if isinstance(event, OutboundChunkSentEvent):
         payload = event.payload

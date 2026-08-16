@@ -64,6 +64,8 @@ def test_codex_tagged_replies_use_standard_outbound_contract(tmp_path) -> None:
     assert codex_payload.no_send is False
     assert codex_payload.raw_reply_text == normal_payload.raw_reply_text
     assert codex_payload.ordered_messages == normal_payload.ordered_messages
+    assert codex_payload.codex_app_server_id == "codex-sandbox"
+    assert codex_payload.codex_task_id == "task_1"
     assert all(isinstance(message, str) and message for message in codex_payload.ordered_messages)
 
 

@@ -39,6 +39,8 @@ class OutboundDeliveryPayload(BaseModel):
     delivered_at: datetime | None = None
     session_id: str | None = None
     trigger_message_id: int | None = None
+    codex_app_server_id: str | None = None
+    codex_task_id: str | None = None
 
 
 class OutboundMessageSentEvent(BaseEvent):

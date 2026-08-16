@@ -26,6 +26,7 @@ from src.events.codex import (
 )
 from src.events.context import (
     CodexCandidateConversationPayload,
+    CodexFollowupFramePayload,
     CodexNotificationFramePayload,
     ContextFrameMessagePayload,
     ContextFramePayload,
@@ -36,7 +37,7 @@ from src.events.context import (
 )
 from src.events.linear import LinearTaskListReceivedEvent
 from src.events.receiver import TelegramTypingUpdatedEvent
-from src.state.models import OpenQuestion, OpenQuestionCandidate
+from src.state.models import GlobalState, OpenQuestion, OpenQuestionCandidate
 from src.state.store import GlobalStateStore
 from src.adapters.linear.status import set_linear_status
 from src.utils.ids import new_session_id
@@ -225,6 +226,11 @@ class ContextLayer:
     def handle_codex_notification(self, event: CodexNotificationReceivedEvent) -> None:
         with emitter_context("context"):
             notification = event.payload
+            self._state_store.remember_codex_task(
+                app_server_id=notification.app_server_id,
+                task_id=notification.task_id,
+                updated_at=event.timestamp or utc_now(),
+            )
             current_message = ContextFrameMessagePayload(
                 message_id=0,
                 sender_id="codex",
@@ -952,6 +958,12 @@ class ContextLayer:
             session.chat_id,
             trigger_message_id,
         )
+        codex_followup = self._codex_followup_for_frame(
+            state,
+            session.chat_id,
+            current_message,
+            conversation_window_messages,
+        )
         fatigue_notice_text = None if self._config.disable_sleep_state else fatigue_notice(state, self._timezone_name)
         return ContextFrameReadyEvent(
             chat_id=session.chat_id,
@@ -978,6 +990,7 @@ class ContextLayer:
                 pending_interruption=pending_interruption,
                 open_question=open_questions[0] if len(open_questions) == 1 else None,
                 open_questions=open_questions,
+                codex_followup=codex_followup,
                 frame_created_at=frame_created_at,
                 visible_read_not_before=visible_read_not_before,
                 visible_surfaced_message_ids=list(visible_surfaced_message_ids or []),
@@ -1010,6 +1023,41 @@ class ContextLayer:
             after=self._config.conversation_window_after,
         )
         return [self._convert_archived_message(message, source="conversation_window") for message in window]
+
+    def _codex_followup_for_frame(
+        self,
+        state: GlobalState,
+        chat_id: int | str,
+        current_message: ContextFrameMessagePayload,
+        conversation_window: list[ContextFrameMessagePayload],
+    ) -> CodexFollowupFramePayload | None:
+        # Preserve task continuity even when the newest parameter is not itself a reply.
+        candidates = [current_message, *reversed(conversation_window)]
+        seen_message_ids: set[int] = set()
+        for message in candidates:
+            if message.message_id in seen_message_ids or message.is_self or message.reply_to_message_id is None:
+                continue
+            seen_message_ids.add(message.message_id)
+            matching_tasks = [
+                item
+                for item in state.codex_tasks.values()
+                if any(
+                    str(link.chat_id) == str(chat_id) and link.message_id == message.reply_to_message_id
+                    for link in item.outbound_messages
+                )
+            ]
+            if not matching_tasks:
+                continue
+            task = max(matching_tasks, key=lambda item: item.updated_at)
+            return CodexFollowupFramePayload(
+                app_server_id=task.app_server_id,
+                task_id=task.task_id,
+                codex_thread_id=task.thread_id,
+                codex_turn_id=task.turn_id,
+                status=task.status,
+                linked_message_id=message.reply_to_message_id,
+            )
+        return None
 
     def _pending_interruption_payload(
         self,

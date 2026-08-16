@@ -27,6 +27,7 @@ CLARIFICATION_POLICY = {
         "the answer could materially change the task objective",
         "the answer could materially change the architecture, data model, integration boundary, or acceptance criteria",
         "there is a real product or safety constraint ambiguity",
+        "a required external value, credential, authorization code, confirmation, or approval is needed to continue",
     ],
     "do_not_ask_for": [
         "filenames",
@@ -35,7 +36,10 @@ CLARIFICATION_POLICY = {
         "boilerplate",
         "other small implementation defaults",
     ],
-    "style": "Ask one meaningful question at a time. Give Amber enough task context, but do not provide a fixed user-facing template.",
+    "style": (
+        "Ask one meaningful question at a time. Give Amber enough task context and include any exact external URL or "
+        "prompt the user needs, but do not provide a fixed user-facing template."
+    ),
 }
 NOTIFICATION_KINDS = frozenset({"milestone", "completion", "blocked", "failed"})
 TERMINAL_NOTIFICATION_KINDS = frozenset({"completion", "blocked", "failed"})
@@ -155,9 +159,10 @@ def _dynamic_tools() -> list[dict[str, Any]]:
             "namespace": "amber",
             "name": "AmberAskUserQuestion",
             "description": (
-                "Ask Amber to gather clarification from the appropriate allowlisted person. "
-                "Use this only when the answer can materially change the task objective, architecture, "
-                "data model, integration boundary, user-facing behavior, safety constraint, or acceptance criteria."
+                "Ask Amber to gather clarification or a required external input from the appropriate allowlisted person. "
+                "Use this when the answer can materially change the task or when Codex cannot continue without a value, "
+                "credential, authorization code, confirmation, or approval that only the user can provide. Include any "
+                "exact external URL or prompt the user needs."
             ),
             "inputSchema": {
                 "type": "object",
@@ -165,7 +170,7 @@ def _dynamic_tools() -> list[dict[str, Any]]:
                     "questions": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "One or more concrete questions Amber should ask.",
+                        "description": "One or more concrete clarification or external-input questions Amber should ask.",
                     },
                     "question": {
                         "type": "string",

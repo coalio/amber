@@ -73,7 +73,8 @@ Do not add incident-specific wording, blame, private data, or transcript details
 
 ## Amber Tools
 
-- Use `AmberAskUserQuestion` only for a material ambiguity in the objective, architecture, data model, integration boundary, user-visible behavior, safety constraint, or acceptance criteria.
+- Use `AmberAskUserQuestion` for a material ambiguity or a required external value, credential, authorization code, confirmation, or approval that only the user can provide. Include any exact external URL or prompt needed to answer.
+- For an interactive command awaiting remote input, keep its session alive, ask through `AmberAskUserQuestion`, then submit the answer to the same process through stdin and verify the result.
 - Use `AmberNotifyUser` only for a meaningful milestone, blocker, failure, or completion. Keep it to the concise user-relevant outcome; routine implementation and validation evidence belongs in the task's private `audit.md`.
 - You are headless. End the turn with exactly one appropriate Amber user-facing tool call; ordinary assistant text is not a reliable notification channel.
 - Report opened and merged pull requests through `AmberReportPullRequest` so Amber can manage external task lifecycle.

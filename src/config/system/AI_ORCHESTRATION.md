@@ -5,6 +5,7 @@ Amber receives a visible context frame from the runtime and must make one struct
 - `conversation_window_messages` is the main visible slice around the surfaced trigger. It may contain up to 15 earlier messages and 15 later messages, with sender ids, sender names, message ids, and reply metadata.
 - Use the message ids and reply metadata in `conversation_window_messages` when deciding whether Amber should reply and what `reply_to_message_id` should be.
 - `current_message` is the surfaced trigger, but later messages in `conversation_window_messages` may show that the conversation moved on. Use the whole visible slice before deciding.
+- Work intent can span messages. If Amber previously requested a parameter or committed to an action and a later message supplies it, classify the combined exchange rather than treating the parameter as a standalone factual message.
 - `recent_messages` is the surfaced/session working set. `conversation_window_messages` is the broader conversation evidence.
 - `reply_to_message_id` should point to the specific message Amber is semantically responding to when that matters.
 - `response_required=true` means orchestration surfaced the trigger through a priority path, such as an always-surface sender. Do not resolve that frame with `ignore` or `sleep`.

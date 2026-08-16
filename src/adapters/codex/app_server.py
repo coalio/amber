@@ -190,9 +190,11 @@ def _dynamic_tools() -> list[dict[str, Any]]:
             "description": (
                 "Ask Amber to consider notifying the user about a meaningful milestone, completion, blocker, or failure. "
                 "This does not expect a response. Do not report routine incremental progress. "
-                "If the user requested command output, script output, generated values, file paths, PR URLs, "
-                "or other concrete results, include the exact result in the message. Do not merely say it was captured. "
-                "A completion message must include both what was implemented and the validated result."
+                "If the user requested command output, script output, generated values, PR URLs, or other externally "
+                "meaningful results, include the exact result in the message. Do not merely say it was captured. "
+                "Otherwise send only the concise user-relevant outcome and keep routine implementation and validation "
+                "evidence in the private task audit. The user cannot access Amber's computer, so never pass internal "
+                "paths, shell commands, or environment changes as user instructions."
             ),
             "inputSchema": {
                 "type": "object",

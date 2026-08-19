@@ -262,6 +262,32 @@ def test_codex_run_task_records_selected_linear_task(tmp_path) -> None:
     assert linear_client.status_updates == [("issue-a", "In Progress")]
 
 
+def test_codex_run_task_persists_non_linear_task_provenance(tmp_path) -> None:
+    state_store = GlobalStateStore(tmp_path / "state.json", "UTC")
+    session = ToolRegistry([GetTool(), CodexRunTask()]).new_session(
+        runtime=ToolRuntime(
+            adapter_registry=AdapterRegistry([FakeCodexAdapter()]),
+            state_store=state_store,
+        )
+    )
+    session.enable("CodexRunTask")
+
+    session.execute(
+        "CodexRunTask",
+        {
+            "task_description": "Perform a remote operation.",
+            "context": {"requires_code_editing": False},
+        },
+    )
+
+    tasks = list(state_store.snapshot().codex_tasks.values())
+    assert len(tasks) == 1
+    assert tasks[0].task_id == "task-linear"
+    assert tasks[0].thread_id == "thread-linear"
+    assert tasks[0].turn_id == "turn-linear"
+    assert tasks[0].status == "started"
+
+
 def test_codex_run_task_uses_linear_project_as_project_context(tmp_path) -> None:
     timezone_name = "America/Managua"
     state_store = GlobalStateStore(tmp_path / "state.json", timezone_name)

@@ -13,6 +13,7 @@ from src.events.context import (
     ContextFrameMessagePayload,
     ContextFramePayload,
     LinearTaskListFramePayload,
+    OpenQuestionPayload,
     PendingInterruptionPayload,
 )
 from src.tools.base import BaseTool
@@ -201,12 +202,98 @@ class FakeCodexRunTask(BaseTool):
     }
     required_arguments = ("task_description", "context")
 
+    def __init__(self) -> None:
+        self.call_count = 0
+
     def run(self, arguments: dict[str, Any], session) -> dict[str, str]:
+        self.call_count += 1
         return {
             "app_server_id": "codex-sandbox",
             "task_id": "task_fake",
             "status": "started",
         }
+
+
+class FakeCodexSendReply(BaseTool):
+    name = "CodexSendReply"
+    description = "Submit a fake Codex clarification."
+    arguments = {
+        "app_server_id": {"type": "string"},
+        "task_id": {"type": "string"},
+        "tool_call_id": {"type": "string"},
+        "answers": {"type": "array", "items": {"type": "string"}},
+        "summary": {"type": "string"},
+        "confidence": {"type": "number"},
+    }
+    required_arguments = ("app_server_id", "task_id", "tool_call_id", "answers", "summary", "confidence")
+
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    def run(self, arguments: dict[str, Any], session) -> dict[str, Any]:
+        self.call_count += 1
+        return {"submitted": True, "response": {"status": "clarification_received"}}
+
+
+class ClarificationThenDuplicateStartProvider:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+        self.denied_start_result: dict[str, Any] | None = None
+
+    def generate_structured_with_metadata(self, *, tools=None, **kwargs: Any):
+        self.calls.append({"tools": tools, **kwargs})
+        assert tools is not None
+        clarification = {
+            "app_server_id": "codex-sandbox",
+            "task_id": "task_waiting",
+            "tool_call_id": "call_waiting",
+            "answers": ["Use example-region-2 and the supplied start URL."],
+            "summary": "The remote login parameters are complete.",
+            "confidence": 0.96,
+        }
+        tools.execute("GetTool", {"tool_name": "CodexSendReply"})
+        tools.execute("CodexSendReply", clarification)
+        self.denied_start_result = tools.execute("GetTool", {"tool_name": "CodexRunTask"})
+        tools.execute(
+            "CodexRunTask",
+            {
+                "task_description": "Retry the remote login flow.",
+                "context": {"requires_code_editing": False},
+            },
+        )
+        return (
+            SemanticDecisionSchema(
+                action="reply",
+                work_intent="delegate",
+                chat_id=1001001001,
+                reply_text="got it, continuing with those settings",
+                confidence=0.96,
+            ),
+            "resp_clarification",
+        )
+
+
+class DuplicateStartProvider:
+    def generate_structured_with_metadata(self, *, tools=None, **kwargs: Any):
+        assert tools is not None
+        arguments = {
+            "task_description": "Perform one non-idempotent operation.",
+            "context": {"requires_code_editing": False},
+        }
+        tools.execute("GetTool", {"tool_name": "CodexRunTask"})
+        first = tools.execute("CodexRunTask", arguments)
+        second = tools.execute("CodexRunTask", arguments)
+        assert second == first
+        return (
+            SemanticDecisionSchema(
+                action="reply",
+                work_intent="delegate",
+                chat_id=1001001001,
+                reply_text="started it",
+                confidence=0.95,
+            ),
+            "resp_duplicate_start",
+        )
 
 
 def test_semantic_client_seeds_ai_system_once_per_session() -> None:
@@ -422,6 +509,7 @@ def test_semantic_client_acknowledges_successful_codex_task_start() -> None:
 
     assert decision.action == "reply"
     assert decision.work_intent == "delegate"
+    assert decision.codex_work_dispatched is True
     assert decision.codex_task_started is True
     assert decision.reply_to_message_id == 412
     assert decision.codex_app_server_id == "codex-sandbox"
@@ -431,6 +519,83 @@ def test_semantic_client_acknowledges_successful_codex_task_start() -> None:
     assert decision.notes
     tools = provider.calls[-1]["tools"]
     assert [execution.name for execution in tools.executions] == ["GetTool", "CodexRunTask"]
+
+
+def test_semantic_client_resumes_waiting_task_without_starting_duplicate() -> None:
+    provider = ClarificationThenDuplicateStartProvider()
+    run_task = FakeCodexRunTask()
+    send_reply = FakeCodexSendReply()
+    client = SemanticModelClient(
+        _config(tool_registry=ToolRegistry([GetTool(), run_task, send_reply])),
+        provider,
+    )
+    frame = _frame(
+        session_id="sess_codex_clarification",
+        trigger_message_id=412,
+        messages=[_message(412, "user-123", "Fixture Sender", "use example-region-2")],
+    )
+    question = OpenQuestionPayload(
+        app_server_id="codex-sandbox",
+        task_id="task_waiting",
+        tool_call_id="call_waiting",
+        questions=["Which region should the remote login use?"],
+        task_description="Continue the remote login flow.",
+        user_replies=["use example-region-2"],
+    )
+    frame.open_question = question
+    frame.open_questions = [question]
+
+    decision = client.decide(frame)
+
+    assert decision.work_intent == "delegate"
+    assert decision.codex_work_dispatched is True
+    assert decision.codex_task_started is False
+    assert decision.codex_task_id == "task_waiting"
+    assert decision.codex_tool_call_id == "call_waiting"
+    assert send_reply.call_count == 1
+    assert run_task.call_count == 0
+    assert provider.denied_start_result is not None
+    assert provider.denied_start_result["enabled"] is False
+    assert "do not start another task" in provider.denied_start_result["error"]
+
+
+def test_semantic_client_reuses_task_start_within_same_model_turn() -> None:
+    provider = DuplicateStartProvider()
+    run_task = FakeCodexRunTask()
+    client = SemanticModelClient(_config(tool_registry=ToolRegistry([GetTool(), run_task])), provider)
+    frame = _frame(
+        session_id="sess_codex_idempotent_start",
+        trigger_message_id=412,
+        messages=[_message(412, "user-123", "Fixture Sender", "perform the operation")],
+    )
+
+    decision = client.decide(frame)
+
+    assert decision.codex_work_dispatched is True
+    assert decision.codex_task_started is True
+    assert run_task.call_count == 1
+
+
+def test_semantic_client_reuses_task_start_across_harness_retry() -> None:
+    provider = CodexStartThenIgnoreProvider()
+    run_task = FakeCodexRunTask()
+    client = SemanticModelClient(_config(tool_registry=ToolRegistry([GetTool(), run_task])), provider)
+    frame = _frame(
+        session_id="sess_codex_harness_retry",
+        trigger_message_id=412,
+        messages=[_message(412, "user-123", "Fixture Sender", "perform the operation")],
+    )
+
+    first = client.decide(frame)
+    second = client.decide(
+        frame,
+        harness_feedback={"code": "fixture_retry"},
+        previous_decision=first,
+    )
+
+    assert first.codex_task_id == second.codex_task_id == "task_fake"
+    assert second.codex_work_dispatched is True
+    assert run_task.call_count == 1
 
 
 def test_semantic_client_keeps_linear_codex_task_start_silent() -> None:

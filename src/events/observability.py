@@ -116,6 +116,7 @@ def summarize_event_payload(event: BaseEvent) -> dict[str, object] | None:
         return {
             "action": payload.action,
             "work_intent": payload.work_intent,
+            "codex_work_dispatched": payload.codex_work_dispatched,
             "codex_task_started": payload.codex_task_started,
             "confidence": _round_score(payload.confidence),
             "reply_to_message_id": payload.reply_to_message_id,

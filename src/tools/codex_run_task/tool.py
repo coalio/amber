@@ -115,6 +115,17 @@ class CodexRunTask(BaseTool):
                     timestamp=utc_now(),
                 )
             return {"error": str(exc)}
+
+        # persist live provenance before any reply can become a follow-up anchor
+        if session.runtime.state_store is not None:
+            session.runtime.state_store.mark_codex_task_turn(
+                app_server_id=task.app_server_id,
+                task_id=task.task_id,
+                thread_id=task.thread_id or resume_thread_id,
+                turn_id=task.turn_id,
+                status=task.status,
+                updated_at=utc_now(),
+            )
         if linear_issue_id and session.runtime.state_store is not None:
             session.runtime.state_store.mark_linear_task_started(
                 issue_id=linear_issue_id,

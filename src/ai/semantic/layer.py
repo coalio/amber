@@ -26,13 +26,13 @@ class ConsciousHarness:
         self._config = config
 
     def evaluate(self, frame: ContextFramePayload, decision: SemanticDecisionSchema) -> HarnessFailure | None:
-        if decision.work_intent == "delegate" and not decision.codex_task_started:
+        if decision.work_intent == "delegate" and not decision.codex_work_dispatched:
             return HarnessFailure(
-                code="delegated_work_requires_codex_task",
+                code="delegated_work_requires_codex_dispatch",
                 reason=(
-                    "The visible conversation asks Amber to do work beyond answering, but no Codex task was "
-                    "started successfully in this turn. Call GetTool for CodexRunTask, call CodexRunTask, and "
-                    "only then acknowledge the work."
+                    "The visible conversation asks Amber to do work beyond answering, but no Codex transition "
+                    "completed successfully in this turn. Resume a waiting clarification with CodexSendReply, "
+                    "or start new work with CodexRunTask, before acknowledging the work."
                 ),
                 context={
                     "current_message": self._message_subject(frame.current_message),
@@ -517,6 +517,7 @@ class AILayer:
         return SemanticDecisionSchema(
             action=decision.action,
             work_intent=decision.work_intent,
+            codex_work_dispatched=decision.codex_work_dispatched,
             codex_task_started=decision.codex_task_started,
             reply_to_message_id=decision.reply_to_message_id,
             chat_id=frame.chat_id,

@@ -129,8 +129,9 @@ def test_work_prompt_delegates_actions_from_full_conversation_context(monkeypatc
     config = SemanticConfig.from_settings(get_settings("indiedreamers"))
 
     assert "whole visible exchange, not only the latest message" in config.system_prompt
-    assert "Use `CodexRunTask` for every request directed to Amber that requires work beyond answering" in config.system_prompt
+    assert "Answering an active `open_question` is the exception" in config.system_prompt
     assert "A short follow-up that supplies a value Amber requested" in config.action_contract_prompt
+    assert "Do not call `CodexRunTask` in the same turn" in config.action_contract_prompt
     assert "Never acknowledge that any delegated work has started" in config.action_contract_prompt
 
     get_settings.cache_clear()

@@ -11,6 +11,7 @@ class SemanticDecisionSchema(BaseModel):
 
     action: Literal["ignore", "reply", "sleep", "expand_memory", "disengage"]
     work_intent: Literal["none", "answer", "delegate"] = "none"
+    codex_work_dispatched: bool = False
     codex_task_started: bool = False
     reply_to_message_id: int | None = None
     chat_id: int | str
@@ -79,6 +80,7 @@ class InterruptionDecisionSchema(BaseModel):
     interrupt_decision: Literal["accept", "decline"]
     action: Literal["ignore", "reply", "sleep", "expand_memory", "disengage"]
     work_intent: Literal["none", "answer", "delegate"] = "none"
+    codex_work_dispatched: bool = False
     codex_task_started: bool = False
     codex_app_server_id: str | None = None
     codex_task_id: str | None = None

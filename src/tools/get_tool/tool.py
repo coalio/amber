@@ -31,6 +31,9 @@ class GetTool(BaseTool):
                 "error": f"Unknown tool: {tool_name}",
                 "available_tools": session.registry.tool_names(exclude_get_tool=True),
             }
+        access_error = session.tool_access_error(tool.name)
+        if access_error is not None:
+            return {"enabled": False, "error": access_error}
         session.enable(tool.name)
         return {
             "enabled": True,

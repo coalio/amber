@@ -12,6 +12,7 @@ class SemanticDecisionPayload(BaseModel):
 
     action: str
     work_intent: str = "none"
+    codex_work_dispatched: bool = False
     codex_task_started: bool = False
     reply_to_message_id: int | None = None
     chat_id: int | str

@@ -11,6 +11,7 @@ from src.state.store import GlobalStateStore
 from src.tools.base import BaseTool
 from src.tools.codex_send_reply import CodexSendReply
 from src.tools.codex_run_task import CodexRunTask
+from src.tools.codex_workflow import CompletedCodexTransition, CodexWorkRoute, CodexWorkStateMachine
 from src.tools.get_memory import GetMemory
 from src.tools.get_tool import GetTool
 from src.tools.manage_memory import ManageMemory
@@ -52,8 +53,19 @@ class ToolRegistry:
             return [name for name in names if name != GET_TOOL_NAME]
         return names
 
-    def new_session(self, runtime: ToolRuntime | None = None) -> ToolSession:
-        return ToolSession(self, runtime=runtime)
+    def new_session(
+        self,
+        runtime: ToolRuntime | None = None,
+        *,
+        codex_work_route: CodexWorkRoute = CodexWorkRoute.UNRESTRICTED,
+        codex_workflow: CodexWorkStateMachine | None = None,
+    ) -> ToolSession:
+        return ToolSession(
+            self,
+            runtime=runtime,
+            codex_work_route=codex_work_route,
+            codex_workflow=codex_workflow,
+        )
 
     def prompt_summary(self) -> str:
         lines = [
@@ -71,17 +83,31 @@ class ToolRegistry:
 
 
 class ToolSession:
-    def __init__(self, registry: ToolRegistry, *, runtime: ToolRuntime | None = None) -> None:
+    def __init__(
+        self,
+        registry: ToolRegistry,
+        *,
+        runtime: ToolRuntime | None = None,
+        codex_work_route: CodexWorkRoute = CodexWorkRoute.UNRESTRICTED,
+        codex_workflow: CodexWorkStateMachine | None = None,
+    ) -> None:
         self.registry = registry
         self.runtime = runtime or ToolRuntime()
         self._enabled_tool_names: list[str] = [GET_TOOL_NAME]
         self._executions: list[ToolExecution] = []
+        self._codex_workflow = codex_workflow or CodexWorkStateMachine(codex_work_route)
 
     def enable(self, name: str) -> None:
         if self.registry.get(name) is None:
             raise RuntimeError(f"Unknown tool: {name}")
+        access_error = self.tool_access_error(name)
+        if access_error is not None:
+            raise RuntimeError(access_error)
         if name not in self._enabled_tool_names:
             self._enabled_tool_names.append(name)
+
+    def tool_access_error(self, name: str) -> str | None:
+        return self._codex_workflow.access_error(name)
 
     def tool_definitions(self) -> list[dict[str, Any]]:
         definitions: list[dict[str, Any]] = []
@@ -93,6 +119,15 @@ class ToolSession:
 
     def execute(self, name: str, arguments: dict[str, Any]) -> Any:
         logger = get_logger("amber.tools")
+        access_error = self.tool_access_error(name)
+        if access_error is not None:
+            result = {"error": access_error}
+            self._record_execution(name, arguments, result)
+            logger.info(
+                "tool.execute_denied",
+                extra={"event": "tool.execute_denied", "context": {"tool_name": name, "arguments": arguments}},
+            )
+            return result
         if name not in self._enabled_tool_names:
             result = {"error": f"Tool is not enabled: {name}"}
             self._record_execution(name, arguments, result)
@@ -116,11 +151,22 @@ class ToolSession:
                 },
             )
             return result
+
+        # replay a committed transition without repeating its external side effect
+        reused, reused_result = self._codex_workflow.replay(name, arguments)
+        if reused:
+            self._record_execution(name, arguments, reused_result)
+            logger.info(
+                "tool.execute_reused",
+                extra={"event": "tool.execute_reused", "context": {"tool_name": name, "result": reused_result}},
+            )
+            return reused_result
         logger.info(
             "tool.execute",
             extra={"event": "tool.execute", "context": {"tool_name": name, "arguments": arguments}},
         )
         result = tool.run(arguments, self)
+        self._codex_workflow.record(name, arguments, result)
         self._record_execution(name, arguments, result)
         logger.info(
             "tool.result",
@@ -131,6 +177,10 @@ class ToolSession:
     @property
     def executions(self) -> tuple[ToolExecution, ...]:
         return tuple(self._executions)
+
+    @property
+    def completed_codex_transition(self) -> CompletedCodexTransition | None:
+        return self._codex_workflow.completed
 
     def _record_execution(self, name: str, arguments: dict[str, Any], result: Any) -> None:
         self._executions.append(

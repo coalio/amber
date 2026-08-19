@@ -11,6 +11,7 @@ from src.ai.semantic.schema import (
 )
 from src.events.context import ContextFrameMessagePayload, ContextFramePayload, PendingInterruptionPayload
 from src.providers.base import ModelProvider
+from src.tools.codex_workflow import CodexWorkRoute, CodexWorkStateMachine
 from src.tools.registry import ToolSession
 
 
@@ -41,6 +42,8 @@ class SemanticSessionState:
     seen_message_ids: set[int] = field(default_factory=set)
     seeded: bool = False
     previous_response_id: str | None = None
+    codex_workflow_trigger_message_id: int | None = None
+    codex_workflow: CodexWorkStateMachine | None = None
 
 
 class SemanticModelClient:
@@ -80,7 +83,7 @@ class SemanticModelClient:
             ]
         )
         structured_with_metadata = getattr(self._provider, "generate_structured_with_metadata", None)
-        tools = self._new_tool_session()
+        tools = self._new_tool_session(frame, session_state)
         if callable(structured_with_metadata):
             request = {
                 "model": self._config.model,
@@ -112,10 +115,38 @@ class SemanticModelClient:
         decision = self._provider.generate_structured(**request)
         return self._finalize_work_decision(frame, decision, tools)
 
-    def _new_tool_session(self) -> ToolSession | None:
+    def _new_tool_session(
+        self,
+        frame: ContextFramePayload,
+        session_state: SemanticSessionState,
+    ) -> ToolSession | None:
         if self._config.tool_registry is None:
             return None
-        return self._config.tool_registry.new_session(runtime=self._config.tool_runtime)
+        route = self._codex_work_route(frame)
+        if (
+            session_state.codex_workflow is None
+            or session_state.codex_workflow_trigger_message_id != frame.trigger_message_id
+            or session_state.codex_workflow.route != route
+        ):
+            session_state.codex_workflow_trigger_message_id = frame.trigger_message_id
+            session_state.codex_workflow = CodexWorkStateMachine(route)
+        return self._config.tool_registry.new_session(
+            runtime=self._config.tool_runtime,
+            codex_workflow=session_state.codex_workflow,
+        )
+
+    def _codex_work_route(self, frame: ContextFramePayload) -> CodexWorkRoute:
+        # route active questions back to their blocked task without relying on reply metadata
+        questions = list(frame.open_questions)
+        if not questions and frame.open_question is not None:
+            questions = [frame.open_question]
+        if questions:
+            if any(question.user_replies for question in questions):
+                return CodexWorkRoute.SUBMIT_CLARIFICATION
+            return CodexWorkRoute.NONE
+        if frame.codex_notification is not None:
+            return CodexWorkRoute.NONE
+        return CodexWorkRoute.START_TASK
 
     def _finalize_work_decision(
         self,
@@ -125,12 +156,23 @@ class SemanticModelClient:
     ) -> SemanticDecisionSchema:
         # derive delegation state from executed tools instead of model claims
         started_task = self._started_codex_task(tools)
+        submitted_reply = self._submitted_codex_reply(tools)
+        work_dispatched = started_task is not None or submitted_reply is not None
         decision = decision.model_copy(
             update={
-                "work_intent": "delegate" if started_task is not None else decision.work_intent,
+                "work_intent": "delegate" if work_dispatched else decision.work_intent,
+                "codex_work_dispatched": work_dispatched,
                 "codex_task_started": started_task is not None,
             }
         )
+        if submitted_reply is not None:
+            return decision.model_copy(
+                update={
+                    "codex_app_server_id": str(submitted_reply.get("app_server_id") or "") or None,
+                    "codex_task_id": str(submitted_reply.get("task_id") or "") or None,
+                    "codex_tool_call_id": str(submitted_reply.get("tool_call_id") or "") or None,
+                }
+            )
         if started_task is None:
             return decision
         decision = decision.model_copy(
@@ -180,16 +222,21 @@ class SemanticModelClient:
     def _started_codex_task(self, tools: ToolSession | None) -> dict[str, Any] | None:
         if tools is None:
             return None
-        for execution in tools.executions:
-            if execution.name != "CodexRunTask":
-                continue
-            result = execution.result
-            if not isinstance(result, dict):
-                continue
-            if result.get("error"):
-                continue
-            if result.get("task_id") and result.get("status"):
+        transition = tools.completed_codex_transition
+        if transition is not None and transition.tool_name == "CodexRunTask":
+            result = transition.result
+            if isinstance(result, dict) and not result.get("error") and result.get("task_id") and result.get("status"):
                 return result
+        return None
+
+    def _submitted_codex_reply(self, tools: ToolSession | None) -> dict[str, Any] | None:
+        if tools is None:
+            return None
+        transition = tools.completed_codex_transition
+        if transition is not None and transition.tool_name == "CodexSendReply":
+            result = transition.result
+            if isinstance(result, dict) and not result.get("error") and result.get("submitted") is True:
+                return transition.arguments
         return None
 
     def decide_interruption(
@@ -226,7 +273,7 @@ class SemanticModelClient:
             ),
         ]
         structured_with_metadata = getattr(self._provider, "generate_structured_with_metadata", None)
-        tools = self._new_tool_session()
+        tools = self._new_tool_session(frame, session_state)
         if callable(structured_with_metadata):
             request = {
                 "model": self._config.model,
@@ -264,17 +311,31 @@ class SemanticModelClient:
         decision: InterruptionDecisionSchema,
         tools: ToolSession | None,
     ) -> InterruptionDecisionSchema:
-        # carry verified task state through interruption normalization
+        # carry verified work state through interruption normalization
         started_task = self._started_codex_task(tools)
-        if started_task is None:
-            return decision.model_copy(update={"codex_task_started": False})
+        submitted_reply = self._submitted_codex_reply(tools)
+        if started_task is None and submitted_reply is None:
+            return decision.model_copy(update={"codex_work_dispatched": False, "codex_task_started": False})
         update: dict[str, Any] = {
             "work_intent": "delegate",
-            "codex_task_started": True,
-            "codex_app_server_id": str(started_task.get("app_server_id") or "") or None,
-            "codex_task_id": str(started_task.get("task_id") or "") or None,
+            "codex_work_dispatched": True,
+            "codex_task_started": started_task is not None,
         }
-        if decision.action != "reply" or not (decision.reply_text or "").strip():
+        if submitted_reply is not None:
+            update.update(
+                {
+                    "codex_app_server_id": str(submitted_reply.get("app_server_id") or "") or None,
+                    "codex_task_id": str(submitted_reply.get("task_id") or "") or None,
+                }
+            )
+        elif started_task is not None:
+            update.update(
+                {
+                    "codex_app_server_id": str(started_task.get("app_server_id") or "") or None,
+                    "codex_task_id": str(started_task.get("task_id") or "") or None,
+                }
+            )
+        if started_task is not None and (decision.action != "reply" or not (decision.reply_text or "").strip()):
             update.update(
                 {
                     "interrupt_decision": "accept",

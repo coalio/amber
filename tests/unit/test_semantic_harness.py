@@ -44,7 +44,7 @@ def test_harness_allows_short_reply_that_does_not_share_trigger_tokens() -> None
     assert harness.evaluate(frame, decision) is None
 
 
-def test_harness_rejects_delegated_work_without_verified_codex_task() -> None:
+def test_harness_rejects_delegated_work_without_verified_codex_dispatch() -> None:
     harness = ConsciousHarness(AIConfig(semantic_retry_budget=1, max_reply_chars=320))
     frame = _build_frame("fixture-profile and example-region-1")
     decision = SemanticDecisionSchema(
@@ -59,8 +59,8 @@ def test_harness_rejects_delegated_work_without_verified_codex_task() -> None:
     failure = harness.evaluate(frame, decision)
 
     assert failure is not None
-    assert failure.code == "delegated_work_requires_codex_task"
-    assert harness.evaluate(frame, decision.model_copy(update={"codex_task_started": True})) is None
+    assert failure.code == "delegated_work_requires_codex_dispatch"
+    assert harness.evaluate(frame, decision.model_copy(update={"codex_work_dispatched": True})) is None
 
 
 def test_harness_still_rejects_near_duplicate_reply() -> None:

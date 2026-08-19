@@ -1,16 +1,22 @@
-# Amber 0.4.2
+# Amber 0.5.0
+
+## Added
+
+- Inspect matching repository and local-environment continuity records before starting Codex work, using Linear IDs and similar task slugs to reconnect related work.
+- Persist conversational task, thread, and turn provenance so operational follow-ups can continue the correct live Codex task.
 
 ## Fixed
 
-- Restore the host dynamic-library environment before frozen Amber launches `systemctl`, Podman, the optional ML runtime, or other host programs. This prevents Amber's bundled OpenSSL from overriding newer host libraries.
-- Report systemd user-service failures as concise CLI errors instead of unhandled subprocess tracebacks.
+- Route replies to open Codex clarifications through the waiting task with a single idempotent state transition, preventing a second task and duplicate external actions such as AWS SSO device codes.
+- Accept credentials and other sensitive input when the user explicitly authorizes its task-scoped use, while preventing secret amplification in prompts and task-start logs.
+- Avoid an idle-expiry logging race when a zero-delay callback expires a context session immediately.
+- Keep continuity records instance-local and require durable records for repository and non-repository work.
 
 ## Changed
 
-- Check Linux x86-64 and GNU libc compatibility before downloading a release, then smoke-test the extracted binary before changing the active-release symlink.
-- Enable lingering and wait for the systemd user manager before installing the optional user service.
-- Document the complete Standard, Full, Codex sandbox, and optional user-service prerequisites.
+- Strengthen Codex collaboration guidance for private workspace boundaries, concise progress updates, task-scoped GitHub autonomy, and repository workflow checks.
+- Enforce verified Codex delegation for action requests while supporting interactive operational input.
 
 ## Validation
 
-- The 202-test unit suite covers host-loader restoration, installer compatibility checks, service-manager ordering, and the packaged PyInstaller subprocess boundary.
+- The 215-test unit suite covers clarification routing, idempotent retries, task provenance, credential handling, context expiry, and continuity behavior.

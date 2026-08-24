@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_installer_downloads_split_release_without_full_asset(tmp_path: Path) -> None:
-    archive = _make_release_archive(tmp_path)
+    archive = _make_release_archive(tmp_path, version="0.1.0")
     payload = archive.read_bytes()
     part_a = tmp_path / "amber-linux-x86_64.tar.gz.part-aa"
     part_b = tmp_path / "amber-linux-x86_64.tar.gz.part-ab"
@@ -208,7 +208,7 @@ def test_installer_adds_amber_bin_to_detected_shell_rc_and_prints_amber_command(
 
 
 def test_installer_headless_uses_defaults_and_skips_interactive_setup(tmp_path: Path) -> None:
-    archive = _make_release_archive(tmp_path)
+    archive = _make_release_archive(tmp_path, version="0.6.0")
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -385,7 +385,7 @@ def test_headless_installer_does_not_recreate_an_unhealthy_container(tmp_path: P
 
 
 def test_installer_can_install_full_modernbert_release(tmp_path: Path) -> None:
-    archive = _make_release_archive(tmp_path)
+    archive = _make_release_archive(tmp_path, version="0.5.0")
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -508,7 +508,7 @@ def test_installer_can_install_full_modernbert_release(tmp_path: Path) -> None:
 
 
 def test_installer_reuses_cached_release_archive(tmp_path: Path) -> None:
-    archive = _make_release_archive(tmp_path)
+    archive = _make_release_archive(tmp_path, version="0.2.0")
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -611,7 +611,7 @@ def test_installer_reuses_cached_release_archive(tmp_path: Path) -> None:
 
 
 def test_installer_downloads_fresh_when_user_declines_cached_archive(tmp_path: Path) -> None:
-    archive = _make_release_archive(tmp_path)
+    archive = _make_release_archive(tmp_path, version="0.4.0")
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -702,13 +702,259 @@ def test_installer_downloads_fresh_when_user_declines_cached_archive(tmp_path: P
     ]
 
 
+def test_installer_replaces_cached_archive_with_wrong_embedded_version(tmp_path: Path) -> None:
+    current_root = tmp_path / "current-package"
+    current_root.mkdir()
+    current_archive = _make_release_archive(current_root, version="0.4.0")
+    stale_root = tmp_path / "stale-package"
+    stale_root.mkdir()
+    stale_archive = _make_release_archive(stale_root, version="0.3.0")
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _add_fake_installer_prereqs(fake_bin)
+    curl_log = tmp_path / "curl.log"
+    _write_executable(
+        fake_bin / "curl",
+        """
+        #!/usr/bin/env bash
+        set -euo pipefail
+        out=""
+        url=""
+        while [[ $# -gt 0 ]]; do
+          case "$1" in
+            -o)
+              out="$2"
+              shift 2
+              ;;
+            *)
+              url="$1"
+              shift
+              ;;
+          esac
+        done
+
+        printf '%s\\n' "$url" >> "$FAKE_CURL_LOG"
+        case "$url" in
+          *api.github.com*/releases/latest)
+            cat <<'JSON'
+        {
+          "tag_name": "v0.4.0",
+          "assets": [
+            {"browser_download_url": "https://downloads.example/amber-linux-x86_64.tar.gz"}
+          ]
+        }
+        JSON
+            ;;
+          *amber-linux-x86_64.tar.gz)
+            cp "$FAKE_ARCHIVE" "$out"
+            ;;
+          *)
+            echo "unexpected curl url: $url" >&2
+            exit 2
+            ;;
+        esac
+        """,
+    )
+    tty = tmp_path / "tty"
+    tty.write_text("", encoding="utf-8")
+    fake_log = tmp_path / "amber.log"
+    amber_home = tmp_path / ".amber"
+    tmp_root = tmp_path / "tmp-empty"
+    tmp_root.mkdir()
+    cached_archive = amber_home / "packages" / "v0.4.0" / "amber-linux-x86_64.tar.gz"
+    cached_archive.parent.mkdir(parents=True)
+    cached_archive.write_bytes(stale_archive.read_bytes())
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "AMBER_FAKE_LOG": str(fake_log),
+            "AMBER_HOME": str(amber_home),
+            "AMBER_TTY": str(tty),
+            "FAKE_ARCHIVE": str(current_archive),
+            "FAKE_CURL_LOG": str(curl_log),
+            "PATH": f"{fake_bin}:{env['PATH']}",
+            "TMPDIR": str(tmp_root),
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", "installer/install.sh", "indiedreamers"],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (
+        "Cached Amber v0.4.0 package contains Amber 0.3.0, "
+        "but release v0.4.0 requires Amber 0.4.0; ignoring it."
+    ) in result.stderr
+    assert "Using cached Amber v0.4.0 package" not in result.stdout
+    assert _release_archive_version(cached_archive) == "0.4.0"
+    assert curl_log.read_text(encoding="utf-8").splitlines() == [
+        "https://api.github.com/repos/coalio/amber/releases/latest",
+        "https://downloads.example/amber-linux-x86_64.tar.gz",
+    ]
+
+
+def test_installer_rejects_explicit_archive_with_wrong_version_before_switch(
+    tmp_path: Path,
+) -> None:
+    archive = _make_release_archive(tmp_path, version="0.5.1")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _add_fake_installer_prereqs(fake_bin)
+    tty = tmp_path / "tty"
+    tty.write_text("", encoding="utf-8")
+    fake_log = tmp_path / "amber.log"
+    amber_home = tmp_path / ".amber"
+    previous_release = amber_home / "releases" / "v0.5.1"
+    previous_release.mkdir(parents=True)
+    (previous_release / "marker").write_text("still active\n", encoding="utf-8")
+    (amber_home / "releases" / "current").symlink_to("v0.5.1")
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "AMBER_FAKE_LOG": str(fake_log),
+            "AMBER_HOME": str(amber_home),
+            "AMBER_RELEASE_ARCHIVE": str(archive),
+            "AMBER_RELEASE_TAG": "v0.5.2",
+            "AMBER_TTY": str(tty),
+            "PATH": f"{fake_bin}:{env['PATH']}",
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", "installer/install.sh", "indiedreamers"],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode != 0
+    assert (
+        "Selected Amber v0.5.2 package contains Amber 0.5.1, "
+        "but release v0.5.2 requires Amber 0.5.2."
+    ) in result.stderr
+    assert os.readlink(amber_home / "releases" / "current") == "v0.5.1"
+    assert (previous_release / "marker").read_text(encoding="utf-8") == "still active\n"
+    assert not (amber_home / "releases" / "v0.5.2").exists()
+
+
+def test_installer_does_not_cache_download_with_wrong_embedded_version(tmp_path: Path) -> None:
+    archive = _make_release_archive(tmp_path, version="0.5.1")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _add_fake_installer_prereqs(fake_bin)
+    _write_executable(
+        fake_bin / "curl",
+        """
+        #!/usr/bin/env bash
+        set -euo pipefail
+        out=""
+        url=""
+        while [[ $# -gt 0 ]]; do
+          case "$1" in
+            -o)
+              out="$2"
+              shift 2
+              ;;
+            *)
+              url="$1"
+              shift
+              ;;
+          esac
+        done
+        case "$url" in
+          *api.github.com*/releases/latest)
+            cat <<'JSON'
+        {
+          "tag_name": "v0.5.2",
+          "assets": [
+            {"browser_download_url": "https://downloads.example/amber-linux-x86_64.tar.gz"}
+          ]
+        }
+        JSON
+            ;;
+          *amber-linux-x86_64.tar.gz)
+            cp "$FAKE_ARCHIVE" "$out"
+            ;;
+          *)
+            exit 2
+            ;;
+        esac
+        """,
+    )
+    tty = tmp_path / "tty"
+    tty.write_text("", encoding="utf-8")
+    amber_home = tmp_path / ".amber"
+    tmp_root = tmp_path / "tmp-empty"
+    tmp_root.mkdir()
+    env = os.environ.copy()
+    env.update(
+        {
+            "AMBER_FAKE_LOG": str(tmp_path / "amber.log"),
+            "AMBER_HOME": str(amber_home),
+            "AMBER_TTY": str(tty),
+            "FAKE_ARCHIVE": str(archive),
+            "PATH": f"{fake_bin}:{env['PATH']}",
+            "TMPDIR": str(tmp_root),
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", "installer/install.sh", "indiedreamers"],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode != 0
+    assert (
+        "Downloaded Amber v0.5.2 package contains Amber 0.5.1, "
+        "but release v0.5.2 requires Amber 0.5.2."
+    ) in result.stderr
+    assert not (amber_home / "packages" / "v0.5.2" / "amber-linux-x86_64.tar.gz").exists()
+    assert not (amber_home / "releases" / "v0.5.2").exists()
+
+
 def test_installer_recovers_tmp_release_archive_before_download(tmp_path: Path) -> None:
-    archive = _make_release_archive(tmp_path)
+    archive_root = tmp_path / "matching"
+    archive_root.mkdir()
+    archive = _make_release_archive(archive_root, version="0.3.0")
+    stale_root = tmp_path / "stale"
+    stale_root.mkdir()
+    stale_archive = _make_release_archive(
+        stale_root,
+        version="0.2.0",
+        padding=bytes(range(256)) * 4096,
+    )
+    assert stale_archive.stat().st_size > archive.stat().st_size
+
     tmp_root = tmp_path / "tmp-root"
-    recovered_dir = tmp_root / "tmp.previous"
+    recovered_dir = tmp_root / "tmp.matching"
     recovered_dir.mkdir(parents=True)
     recovered_archive = recovered_dir / "amber-linux-x86_64.tar.gz"
     recovered_archive.write_bytes(archive.read_bytes())
+    stale_recovered_dir = tmp_root / "tmp.stale"
+    stale_recovered_dir.mkdir()
+    stale_recovered_archive = stale_recovered_dir / "amber-linux-x86_64.tar.gz"
+    stale_recovered_archive.write_bytes(stale_archive.read_bytes())
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -785,10 +1031,15 @@ def test_installer_recovers_tmp_release_archive_before_download(tmp_path: Path) 
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "Recovering downloaded Amber v0.3.0 package from" in result.stdout
+    assert f"Recovering downloaded Amber v0.3.0 package from {recovered_archive}" in result.stdout
     assert "Caching Amber package..." in result.stdout
     assert "Extracting Amber v0.3.0..." in result.stdout
-    assert (amber_home / "packages" / "v0.3.0" / "amber-linux-x86_64.tar.gz").exists()
+    assert (
+        f"Recovered package {stale_recovered_archive} contains Amber 0.2.0, "
+        "but release v0.3.0 requires Amber 0.3.0; ignoring it."
+    ) in result.stderr
+    cached_archive = amber_home / "packages" / "v0.3.0" / "amber-linux-x86_64.tar.gz"
+    assert _release_archive_version(cached_archive) == "0.3.0"
     assert curl_log.read_text(encoding="utf-8").splitlines() == [
         "https://api.github.com/repos/coalio/amber/releases/latest",
     ]
@@ -1324,9 +1575,18 @@ def test_installer_stops_before_service_when_linger_and_user_manager_fail(tmp_pa
     )
 
 
-def _make_release_archive(tmp_path: Path) -> Path:
+def _make_release_archive(
+    tmp_path: Path,
+    *,
+    version: str | None = None,
+    padding: bytes = b"",
+) -> Path:
     release_root = tmp_path / "release"
     release_root.mkdir()
+    if version is not None:
+        (release_root / "VERSION").write_text(f"{version}\n", encoding="utf-8")
+    if padding:
+        (release_root / "padding.bin").write_bytes(padding)
     ml_resources = release_root / "resources" / "ml"
     ml_resources.mkdir(parents=True)
     (ml_resources / "requirements.txt").write_text(
@@ -1374,6 +1634,13 @@ def _make_release_archive(tmp_path: Path) -> Path:
         for item in release_root.iterdir():
             handle.add(item, arcname=item.name)
     return archive
+
+
+def _release_archive_version(archive: Path) -> str:
+    with tarfile.open(archive, "r:gz") as handle:
+        version_file = handle.extractfile("VERSION")
+        assert version_file is not None
+        return version_file.read().decode("utf-8").strip()
 
 
 def _write_executable(path: Path, content: str) -> None:

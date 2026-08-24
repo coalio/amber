@@ -258,7 +258,9 @@ def test_ai_layer_fallback_replies_for_required_response_when_retry_budget_exhau
 
     assert result.action == "reply"
     assert result.reply_to_message_id == 1083
-    assert result.reply_text == "i'm here, but i need a minute to answer properly"
+    assert "couldn't complete" in (result.reply_text or "")
+    assert "valid response" in (result.reply_text or "")
+    assert "minute" not in (result.reply_text or "")
     assert "required_response_fallback" in result.notes
 
 

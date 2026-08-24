@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 from src.ai.semantic.schema import SemanticDecisionSchema
@@ -143,13 +144,14 @@ def test_generate_structured_runs_work_mode_tool_loop(monkeypatch) -> None:
 
     third_call = fake_client.responses.calls[2]
     assert third_call["previous_response_id"] == "resp_run_task"
-    assert third_call["input"] == [
-        {
-            "type": "function_call_output",
-            "call_id": "call_run_task",
-            "output": '{"error": "Adapter registry is not available."}',
-        }
-    ]
+    assert len(third_call["input"]) == 1
+    run_task_output = third_call["input"][0]
+    assert run_task_output["type"] == "function_call_output"
+    assert run_task_output["call_id"] == "call_run_task"
+    failure = json.loads(run_task_output["output"])
+    assert failure["error"] == "Adapter registry is not available."
+    assert failure["error_code"] == "adapter_registry_unavailable"
+    assert "not configured" in failure["user_error"]
 
 
 def _assert_strict_tool_definitions(tools: list[dict]) -> None:

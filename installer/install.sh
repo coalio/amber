@@ -1127,6 +1127,75 @@ archive_is_readable() {
   printf '%s\n' "$entries" | grep -Eq '^(\./)?amber$'
 }
 
+release_version_for_tag() {
+  local tag="$1"
+  if [[ "$tag" =~ ^v?([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  return 1
+}
+
+archive_release_version() {
+  local archive="$1"
+  local version
+
+  if version="$(tar -xOzf "$archive" ./VERSION 2>/dev/null)"; then
+    :
+  elif version="$(tar -xOzf "$archive" VERSION 2>/dev/null)"; then
+    :
+  else
+    return 1
+  fi
+  version="${version%%$'\n'*}"
+  version="${version%$'\r'}"
+  [[ -n "$version" ]] || return 1
+  printf '%s\n' "$version"
+}
+
+archive_matches_release_tag() {
+  local archive="$1"
+  local tag="$2"
+  local expected actual
+
+  if ! expected="$(release_version_for_tag "$tag")"; then
+    return 0
+  fi
+  actual="$(archive_release_version "$archive")" || return 1
+  [[ "$actual" == "$expected" ]]
+}
+
+warn_archive_version_mismatch() {
+  local label="$1"
+  local archive="$2"
+  local tag="$3"
+  local expected actual
+
+  expected="$(release_version_for_tag "$tag")" || return 0
+  if actual="$(archive_release_version "$archive")"; then
+    warn "$label contains Amber $actual, but release $tag requires Amber $expected; ignoring it."
+  else
+    warn "$label has no readable VERSION file, but release $tag requires Amber $expected; ignoring it."
+  fi
+}
+
+require_archive_version_match() {
+  local archive="$1"
+  local tag="$2"
+  local label="$3"
+  local expected actual
+
+  expected="$(release_version_for_tag "$tag")" || return 0
+  if ! actual="$(archive_release_version "$archive")"; then
+    error "$label has no readable VERSION file; release $tag requires Amber $expected."
+    return 1
+  fi
+  if [[ "$actual" != "$expected" ]]; then
+    error "$label contains Amber $actual, but release $tag requires Amber $expected."
+    return 1
+  fi
+}
+
 curl_download() {
   local url="$1"
   local output="$2"
@@ -1221,18 +1290,23 @@ confirm_cached_archive_use() {
 }
 
 recoverable_tmp_archive() {
+  local tag="$1"
   local archive size best best_size tmp_root
 
-  # prefer the largest readable tmp package so tiny test fixtures lose to real downloads
+  # prefer the largest matching tmp package so interrupted real downloads beat tiny fixtures
   best=""
   best_size=0
   tmp_root="${TMPDIR:-/tmp}"
   while IFS= read -r archive; do
     if [[ -f "$archive" ]] && archive_is_readable "$archive"; then
-      size="$(file_size "$archive")"
-      if (( size > best_size )); then
-        best="$archive"
-        best_size="$size"
+      if archive_matches_release_tag "$archive" "$tag"; then
+        size="$(file_size "$archive")"
+        if (( size > best_size )); then
+          best="$archive"
+          best_size="$size"
+        fi
+      else
+        warn_archive_version_mismatch "Recovered package $archive" "$archive" "$tag"
       fi
     fi
   done < <(find "$tmp_root" -maxdepth 3 -type f -name "$ASSET_NAME" 2>/dev/null || true)
@@ -1319,16 +1393,21 @@ install_release() {
   else
     cache_dir="$AMBER_HOME/packages/$tag"
     cached_archive="$cache_dir/$ASSET_NAME"
-    if [[ -f "$cached_archive" ]] && archive_is_readable "$cached_archive" && confirm_cached_archive_use "$cached_archive"; then
+    if [[ -f "$cached_archive" ]] \
+      && archive_is_readable "$cached_archive" \
+      && archive_matches_release_tag "$cached_archive" "$tag" \
+      && confirm_cached_archive_use "$cached_archive"; then
       info "Using cached Amber $tag package from $cached_archive..."
       archive="$cached_archive"
     else
       if [[ -f "$cached_archive" ]] && ! archive_is_readable "$cached_archive"; then
         warn "Cached Amber $tag package is not readable; downloading it again..."
+      elif [[ -f "$cached_archive" ]] && ! archive_matches_release_tag "$cached_archive" "$tag"; then
+        warn_archive_version_mismatch "Cached Amber $tag package" "$cached_archive" "$tag"
       elif [[ -f "$cached_archive" ]]; then
         info "Downloading a fresh Amber $tag package..."
       fi
-      if recovered_archive="$(recoverable_tmp_archive)"; then
+      if recovered_archive="$(recoverable_tmp_archive "$tag")"; then
         info "Recovering downloaded Amber $tag package from $recovered_archive..."
         copy_archive_to_cache "$recovered_archive" "$cached_archive"
         archive="$cached_archive"
@@ -1338,10 +1417,21 @@ install_release() {
           error "Downloaded Amber $tag package is not a readable tar.gz archive."
           exit 1
         fi
+        if ! require_archive_version_match "$archive" "$tag" "Downloaded Amber $tag package"; then
+          exit 1
+        fi
         copy_archive_to_cache "$archive" "$cached_archive"
         archive="$cached_archive"
       fi
     fi
+  fi
+
+  if ! archive_is_readable "$archive"; then
+    error "Selected Amber $tag package is not a readable tar.gz archive."
+    exit 1
+  fi
+  if ! require_archive_version_match "$archive" "$tag" "Selected Amber $tag package"; then
+    exit 1
   fi
 
   # replace the selected release while preserving workspaces and old cached packages

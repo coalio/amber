@@ -48,7 +48,7 @@ def test_settings_load_workspace_toml_and_env_overrides(monkeypatch, tmp_path) -
     settings = get_settings("indiedreamers")
 
     assert settings.workspace_dir == workspace
-    assert settings.release_version == "0.5.1"
+    assert settings.release_version == "0.5.2"
     assert settings.attention_scorer == "modernbert"
     assert settings.ai_model == "gpt-test"
     assert settings.codex_container_name == "amber-indiedreamers-codex"

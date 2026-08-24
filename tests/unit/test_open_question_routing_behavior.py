@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from src.adapters.base import BaseAdapter
@@ -154,7 +154,6 @@ def _remember_question(
             )
         ],
         created_at=now,
-        expires_at=now + timedelta(minutes=15),
     )
 
 

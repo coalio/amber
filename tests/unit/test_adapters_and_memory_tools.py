@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
-from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -671,7 +670,6 @@ def test_codex_send_reply_submits_output_and_clears_open_question(tmp_path: Path
             )
         ],
         created_at=now,
-        expires_at=now + timedelta(minutes=15),
     )
     adapter = FakeCodexAdapter()
     session = default_tool_registry().new_session(

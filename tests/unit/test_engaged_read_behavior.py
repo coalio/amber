@@ -153,7 +153,6 @@ def test_codex_clarification_is_interrupted_by_newer_open_question_reply(tmp_pat
             )
         ],
         created_at=utc_now(),
-        expires_at=utc_now() + timedelta(minutes=15),
     )
     transport = RecordingTransport()
     archive = MessageArchive.instance()

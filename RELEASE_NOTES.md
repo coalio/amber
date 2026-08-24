@@ -1,22 +1,14 @@
-# Amber 0.5.0
-
-## Added
-
-- Inspect matching repository and local-environment continuity records before starting Codex work, using Linear IDs and similar task slugs to reconnect related work.
-- Persist conversational task, thread, and turn provenance so operational follow-ups can continue the correct live Codex task.
+# Amber 0.5.1
 
 ## Fixed
 
-- Route replies to open Codex clarifications through the waiting task with a single idempotent state transition, preventing a second task and duplicate external actions such as AWS SSO device codes.
-- Accept credentials and other sensitive input when the user explicitly authorizes its task-scoped use, while preventing secret amplification in prompts and task-start logs.
-- Avoid an idle-expiry logging race when a zero-delay callback expires a context session immediately.
-- Keep continuity records instance-local and require durable records for repository and non-repository work.
-
-## Changed
-
-- Strengthen Codex collaboration guidance for private workspace boundaries, concise progress updates, task-scoped GitHub autonomy, and repository workflow checks.
-- Enforce verified Codex delegation for action requests while supporting interactive operational input.
+- Keep Codex clarification turns token-idle and durable for as long as a person needs to reply, without the previous clarification metadata or six-hour runner deadlines.
+- Recover a clarification after an app-server, worker, or host restart by continuing its recorded Codex thread instead of deadlocking behind the duplicate-task state-machine guard.
+- Make clarification delivery idempotent across dropped and replayed HTTP responses, detect conflicting replays, and reset event cursors when only the app-server process restarts.
+- Report the concrete verified work blocker after retries are exhausted instead of claiming Amber only needs more time.
+- Persist runtime state atomically with private permissions and redact credential-shaped content from logs.
 
 ## Validation
 
-- The 215-test unit suite covers clarification routing, idempotent retries, task provenance, credential handling, context expiry, and continuity behavior.
+- The 242-test unit suite covers multi-day waits, malformed input, stale identifiers, missing threads, failed recovery, dead worker pipes, process and event-log restarts, interrupted state writes, dropped and truncated responses, idempotent and conflicting replays, truthful fallback replies, private state permissions, and log redaction.
+- Three fixture-driven work-mode integration tests cover task delegation and Codex event delivery.

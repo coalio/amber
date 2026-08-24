@@ -16,6 +16,7 @@ from src.events.context import ContextFrameReadyEvent
 from src.events.linear import LinearTaskListReceivedEvent
 from src.events.outbound import OutboundMessagePreparedEvent
 from src.events.receiver import TelegramMessagePayload, TelegramMessageReceivedEvent, TelegramTypingUpdatedEvent
+from src.utils.logging import redact_sensitive_text
 
 
 _PREVIEW_LIMIT = 120
@@ -118,6 +119,7 @@ def summarize_event_payload(event: BaseEvent) -> dict[str, object] | None:
             "work_intent": payload.work_intent,
             "codex_work_dispatched": payload.codex_work_dispatched,
             "codex_task_started": payload.codex_task_started,
+            "codex_work_error_code": payload.codex_work_error_code,
             "confidence": _round_score(payload.confidence),
             "reply_to_message_id": payload.reply_to_message_id,
             "trigger_message_id": payload.trigger_message_id,
@@ -230,7 +232,7 @@ def _telegram_message_summary(message: TelegramMessagePayload) -> dict[str, obje
 def _preview(text: str | None, *, limit: int = _PREVIEW_LIMIT) -> str | None:
     if not text:
         return None
-    compact = " ".join(text.split())
+    compact = " ".join(redact_sensitive_text(text).split())
     if len(compact) <= limit:
         return compact
     return f"{compact[: limit - 3]}..."

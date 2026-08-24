@@ -18,7 +18,7 @@ from src.state.models import (
     OpenQuestionCandidate,
     PendingInterruption,
 )
-from src.utils.files import read_json, write_json
+from src.utils.files import read_json, write_json_atomic
 from src.utils.time import local_now, utc_now
 
 _UNSET = object()
@@ -33,6 +33,7 @@ class GlobalStateStore:
         self._path = path
         self._timezone_name = timezone_name
         self._lock = Lock()
+        self._secure_state_file()
         self._state = self._load()
 
     def _default_state(self) -> GlobalState:
@@ -49,7 +50,12 @@ class GlobalStateStore:
         return GlobalState.model_validate(payload)
 
     def _persist(self, state: GlobalState) -> None:
-        write_json(self._path, state.model_dump(mode="json"))
+        write_json_atomic(self._path, state.model_dump(mode="json"), mode=0o600)
+
+    def _secure_state_file(self) -> None:
+        # conversation state can contain user-supplied credentials while work is blocked
+        if self._path.exists():
+            self._path.chmod(0o600)
 
     def snapshot(self) -> GlobalState:
         with self._lock:
@@ -213,6 +219,11 @@ class GlobalStateStore:
             self._persist(self._state)
             return task.model_copy(deep=True)
 
+    def codex_task_by_ids(self, *, app_server_id: str, task_id: str) -> CodexTaskLink | None:
+        with self._lock:
+            task = self._state.codex_tasks.get(_codex_task_key(app_server_id, task_id))
+            return task.model_copy(deep=True) if task is not None else None
+
     def codex_task_for_outbound_message(self, *, chat_id: int | str, message_id: int) -> CodexTaskLink | None:
         with self._lock:
             matches = [
@@ -328,7 +339,6 @@ class GlobalStateStore:
         context: dict[str, str | int | float | bool | None],
         candidate_people: list[OpenQuestionCandidate],
         created_at: datetime,
-        expires_at: datetime,
     ) -> OpenQuestion:
         question = OpenQuestion(
             chat_id=chat_id,
@@ -342,7 +352,6 @@ class GlobalStateStore:
             context=dict(context),
             candidate_people=list(candidate_people),
             created_at=created_at,
-            expires_at=expires_at,
         )
         with self._lock:
             self._state.open_questions[_codex_question_key(app_server_id, task_id, tool_call_id)] = question
@@ -421,6 +430,17 @@ class GlobalStateStore:
             self._persist(self._state)
             return question.model_copy(deep=True)
 
+    def open_question_by_codex_ids(
+        self,
+        *,
+        app_server_id: str,
+        task_id: str,
+        tool_call_id: str,
+    ) -> OpenQuestion | None:
+        with self._lock:
+            question = self._state.open_questions.get(_codex_question_key(app_server_id, task_id, tool_call_id))
+            return question.model_copy(deep=True) if question is not None else None
+
     def open_questions_for_chat(
         self,
         chat_id: int | str,
@@ -434,18 +454,6 @@ class GlobalStateStore:
                 if str(question.chat_id) == str(chat_id)
                 and (sender_id is None or str(question.sender_id) == str(sender_id))
             ]
-
-    def expire_open_questions(self, now: datetime) -> list[OpenQuestion]:
-        with self._lock:
-            expired_keys = [
-                key
-                for key, question in self._state.open_questions.items()
-                if question.expires_at <= now
-            ]
-            expired = [self._state.open_questions.pop(key) for key in expired_keys]
-            if expired:
-                self._persist(self._state)
-            return [question.model_copy(deep=True) for question in expired]
 
     def sync_linear_queue(self, task_payloads: list[dict[str, Any]], *, seen_at: datetime) -> None:
         incoming_by_id = {str(item.get("issue_id") or ""): dict(item) for item in task_payloads}

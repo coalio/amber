@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, urlparse
 
 
 APP_SERVER_ID = "codex-sandbox"
+SERVER_INSTANCE_ID = f"server_{uuid.uuid4().hex}"
 YOLO_MODE = True
 TASKS: dict[str, dict[str, Any]] = {}
 EVENTS: list[dict[str, Any]] = []
@@ -50,6 +51,7 @@ def _health_payload() -> dict[str, Any]:
     return {
         "ok": True,
         "app_server_id": APP_SERVER_ID,
+        "server_instance_id": SERVER_INSTANCE_ID,
         "runner": "codex-cli",
         "yolo_mode": YOLO_MODE,
     }
@@ -413,7 +415,9 @@ class CodexTaskRunner:
         threading.Thread(target=self._run, name=f"codex-task-{self.task_id}", daemon=True).start()
 
     def submit_tool_output(self, tool_call_id: str, output: dict[str, Any]) -> bool:
-        pending = self.pending_tool_calls.pop(tool_call_id, None)
+        if self._done.is_set():
+            return False
+        pending = self.pending_tool_calls.get(tool_call_id)
         if pending is None:
             return False
         self._last_assistant_message = ""
@@ -422,10 +426,14 @@ class CodexTaskRunner:
             pending.client.respond(pending.request_id, self._user_input_response(pending.questions, output))
         else:
             pending.client.respond(pending.request_id, _content_response(output, True))
+        self.pending_tool_calls.pop(tool_call_id, None)
         with LOCK:
             task = TASKS.get(self.task_id)
             if task is not None:
                 task["status"] = "running"
+                task["pending_tool_calls"] = [
+                    item for item in task.get("pending_tool_calls", []) if item != tool_call_id
+                ]
             _append_event(
                 {
                     "type": "CodexToolOutputReceived",
@@ -463,12 +471,16 @@ class CodexTaskRunner:
             self.client.notify("initialized", {})
             self._start_thread()
             self._start_turn()
-            self._done.wait(timeout=60 * 60 * 6)
+            # a blocked dynamic tool call is token-idle and must wait for the user without a deadline
+            self._done.wait()
         except Exception as exc:
             self._fail(str(exc))
         finally:
             if self.client is not None:
                 self.client.stop()
+            with LOCK:
+                if RUNNERS.get(self.task_id) is self:
+                    RUNNERS.pop(self.task_id, None)
 
     def _codex_command(self) -> list[str]:
         command = ["codex"]
@@ -1043,7 +1055,7 @@ class Handler(BaseHTTPRequestHandler):
             after = int((query.get("after") or ["0"])[0])
             with LOCK:
                 events = _events_after(after)
-            _json_response(self, 200, {"events": events})
+            _json_response(self, 200, {"server_instance_id": SERVER_INSTANCE_ID, "events": events})
             return
         _json_response(self, 404, {"error": "not_found"})
 
@@ -1163,15 +1175,55 @@ class Handler(BaseHTTPRequestHandler):
         output = payload.get("output") if isinstance(payload.get("output"), dict) else {}
         with LOCK:
             task = TASKS.get(task_id)
-            runner = RUNNERS.get(task_id)
             if task is None:
                 _json_response(self, 404, {"error": "unknown_task"})
                 return
-            task["tool_outputs"].append(payload)
-        submitted = runner.submit_tool_output(tool_call_id, output) if runner is not None else False
-        if not submitted:
-            _json_response(self, 404, {"error": "unknown_tool_call"})
-            return
+
+            # replay a committed answer when the HTTP response was lost after delivery
+            completed = next(
+                (
+                    item
+                    for item in task.get("tool_outputs", [])
+                    if str(item.get("tool_call_id") or "") == tool_call_id
+                ),
+                None,
+            )
+            if completed is not None:
+                completed_output = completed.get("output") if isinstance(completed.get("output"), dict) else {}
+                if completed_output != output:
+                    _json_response(self, 409, {"error": "tool_output_conflict"})
+                    return
+                _json_response(
+                    self,
+                    200,
+                    {
+                        "app_server_id": APP_SERVER_ID,
+                        "task_id": task_id,
+                        "status": "clarification_received",
+                        "replayed": True,
+                    },
+                )
+                return
+
+            # commit delivery before acknowledging the HTTP request
+            runner = RUNNERS.get(task_id)
+            if runner is None or runner._done.is_set():
+                _json_response(self, 409, {"error": "task_runner_unavailable"})
+                return
+            try:
+                submitted = runner.submit_tool_output(tool_call_id, output)
+            except (OSError, RuntimeError):
+                # A dead JSON-RPC pipe is a lost worker, not an ambiguous HTTP success.
+                runner._done.set()
+                if RUNNERS.get(task_id) is runner:
+                    RUNNERS.pop(task_id, None)
+                task["status"] = "failed"
+                _json_response(self, 409, {"error": "task_runner_unavailable"})
+                return
+            if not submitted:
+                _json_response(self, 404, {"error": "unknown_tool_call"})
+                return
+            task.setdefault("tool_outputs", []).append({"tool_call_id": tool_call_id, "output": output})
         _json_response(
             self,
             200,

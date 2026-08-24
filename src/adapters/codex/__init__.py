@@ -1,4 +1,5 @@
 from src.adapters.codex.adapter import (
+    CodexAppServerRequestError,
     CodexAdapter,
     CodexNotification,
     CodexNotificationKind,
@@ -15,6 +16,7 @@ from src.adapters.codex.sandbox import (
 from src.adapters.codex.task_lifecycle import CodexTaskLifecycleHandler
 
 __all__ = [
+    "CodexAppServerRequestError",
     "CodexAdapter",
     "CodexNotification",
     "CodexNotificationKind",

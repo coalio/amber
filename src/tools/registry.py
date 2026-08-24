@@ -11,7 +11,7 @@ from src.state.store import GlobalStateStore
 from src.tools.base import BaseTool
 from src.tools.codex_send_reply import CodexSendReply
 from src.tools.codex_run_task import CodexRunTask
-from src.tools.codex_workflow import CompletedCodexTransition, CodexWorkRoute, CodexWorkStateMachine
+from src.tools.codex_workflow import CompletedCodexTransition, FailedCodexTransition, CodexWorkRoute, CodexWorkStateMachine
 from src.tools.get_memory import GetMemory
 from src.tools.get_tool import GetTool
 from src.tools.manage_memory import ManageMemory
@@ -125,7 +125,7 @@ class ToolSession:
             self._record_execution(name, arguments, result)
             logger.info(
                 "tool.execute_denied",
-                extra={"event": "tool.execute_denied", "context": {"tool_name": name, "arguments": arguments}},
+                extra={"event": "tool.execute_denied", "context": _tool_argument_log_context(name, arguments)},
             )
             return result
         if name not in self._enabled_tool_names:
@@ -135,7 +135,7 @@ class ToolSession:
                 "tool.execute_denied",
                 extra={
                     "event": "tool.execute_denied",
-                    "context": {"tool_name": name, "arguments": arguments},
+                    "context": _tool_argument_log_context(name, arguments),
                 },
             )
             return result
@@ -147,7 +147,7 @@ class ToolSession:
                 "tool.execute_unknown",
                 extra={
                     "event": "tool.execute_unknown",
-                    "context": {"tool_name": name, "arguments": arguments},
+                    "context": _tool_argument_log_context(name, arguments),
                 },
             )
             return result
@@ -158,19 +158,19 @@ class ToolSession:
             self._record_execution(name, arguments, reused_result)
             logger.info(
                 "tool.execute_reused",
-                extra={"event": "tool.execute_reused", "context": {"tool_name": name, "result": reused_result}},
+                extra={"event": "tool.execute_reused", "context": _tool_result_log_context(name, reused_result)},
             )
             return reused_result
         logger.info(
             "tool.execute",
-            extra={"event": "tool.execute", "context": {"tool_name": name, "arguments": arguments}},
+            extra={"event": "tool.execute", "context": _tool_argument_log_context(name, arguments)},
         )
         result = tool.run(arguments, self)
         self._codex_workflow.record(name, arguments, result)
         self._record_execution(name, arguments, result)
         logger.info(
             "tool.result",
-            extra={"event": "tool.result", "context": {"tool_name": name, "result": result}},
+            extra={"event": "tool.result", "context": _tool_result_log_context(name, result)},
         )
         return result
 
@@ -181,6 +181,14 @@ class ToolSession:
     @property
     def completed_codex_transition(self) -> CompletedCodexTransition | None:
         return self._codex_workflow.completed
+
+    @property
+    def last_codex_failure(self) -> FailedCodexTransition | None:
+        return self._codex_workflow.last_failure
+
+    def record_codex_failure(self, tool_name: str, result: dict[str, Any]) -> None:
+        """Expose a route denial discovered while loading a Codex transition tool."""
+        self._codex_workflow.record(tool_name, {}, result)
 
     def _record_execution(self, name: str, arguments: dict[str, Any], result: Any) -> None:
         self._executions.append(
@@ -194,3 +202,46 @@ class ToolSession:
 
 def default_tool_registry() -> ToolRegistry:
     return ToolRegistry([GetTool(), GetMemory(), ManageMemory(), CodexRunTask(), CodexSendReply(), SendFile()])
+
+
+def _tool_argument_log_context(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    # log only shape metadata because any tool argument can contain user secrets
+    context: dict[str, Any] = {
+        "tool_name": tool_name,
+        "argument_keys": sorted(str(key) for key in arguments),
+        "argument_shapes": {str(key): _value_shape(value) for key, value in arguments.items()},
+    }
+    if tool_name == GET_TOOL_NAME:
+        requested_tool_name = str(arguments.get("tool_name") or "")
+        if requested_tool_name in {"CodexRunTask", "CodexSendReply", "GetMemory", "ManageMemory", "SendFile"}:
+            context["requested_tool_name"] = requested_tool_name
+    return context
+
+
+def _tool_result_log_context(tool_name: str, result: Any) -> dict[str, Any]:
+    # retain operational outcome without serializing tool-returned content
+    context: dict[str, Any] = {"tool_name": tool_name, "outcome": "success"}
+    if not isinstance(result, dict):
+        context["result_shape"] = _value_shape(result)
+        return context
+    context["result_keys"] = sorted(str(key) for key in result)
+    if result.get("error"):
+        context["outcome"] = "error"
+        context["error_code"] = str(result.get("error_code") or "unspecified")
+    for key in ("status", "submitted", "recovered", "enabled"):
+        value = result.get(key)
+        if isinstance(value, str | bool | int | float):
+            context[key] = value
+    return context
+
+
+def _value_shape(value: Any) -> dict[str, Any]:
+    if isinstance(value, str):
+        return {"type": "string", "chars": len(value)}
+    if isinstance(value, dict):
+        return {"type": "object", "items": len(value)}
+    if isinstance(value, list | tuple | set):
+        return {"type": "array", "items": len(value)}
+    if value is None:
+        return {"type": "null"}
+    return {"type": type(value).__name__}

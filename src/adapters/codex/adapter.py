@@ -91,6 +91,19 @@ CodexTaskCompletedHandler = Callable[[CodexTaskCompleted], None]
 CodexPullRequestEventHandler = Callable[[CodexPullRequestEvent], None]
 
 
+class CodexAppServerRequestError(RuntimeError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        error_code: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.error_code = error_code
+
+
 class CodexAdapter(BaseAdapter):
     name = "codex"
 
@@ -149,6 +162,7 @@ class CodexAdapter(BaseAdapter):
         self._poll_thread: threading.Thread | None = None
         self._poll_stop = threading.Event()
         self._last_event_seq = 0
+        self._event_server_instance_id: str | None = None
         self._completed_tool_call_keys: set[tuple[str, str, str]] = set()
         self._codex_update_checked = False
         self._codex_update_lock = threading.Lock()
@@ -744,6 +758,19 @@ class CodexAdapter(BaseAdapter):
         while not self._poll_stop.is_set():
             try:
                 payload = self._get_json(f"/events?{parse.urlencode({'after': self._last_event_seq})}", timeout=10)
+                server_instance_id = _optional_response_str(payload.get("server_instance_id"))
+                if (
+                    server_instance_id is not None
+                    and self._event_server_instance_id is not None
+                    and server_instance_id != self._event_server_instance_id
+                ):
+                    # The app-server lost its in-memory event log. Start at its new sequence origin.
+                    self._last_event_seq = 0
+                    self._completed_tool_call_keys.clear()
+                    self._event_server_instance_id = server_instance_id
+                    continue
+                if server_instance_id is not None:
+                    self._event_server_instance_id = server_instance_id
                 events = [item for item in payload.get("events", []) if isinstance(item, dict)]
                 completed_keys = {
                     self._event_key(item)
@@ -976,14 +1003,50 @@ class CodexAdapter(BaseAdapter):
         )
         try:
             with request.urlopen(req, timeout=30) as response:
-                body = response.read().decode("utf-8")
-        except error.URLError as exc:
-            raise RuntimeError(f"Codex app-server request failed: {exc}") from exc
+                raw_body = response.read()
+        except error.HTTPError as exc:
+            # preserve a typed server error so callers can distinguish stale state from transport ambiguity
+            raw_body = exc.read().decode("utf-8", errors="replace")
+            try:
+                error_payload = json.loads(raw_body) if raw_body.strip() else {}
+            except json.JSONDecodeError:
+                error_payload = {}
+            error_code = str(error_payload.get("error") or "http_error") if isinstance(error_payload, dict) else "http_error"
+            raise CodexAppServerRequestError(
+                f"Codex app-server returned HTTP {exc.code}: {error_code}",
+                status_code=exc.code,
+                error_code=error_code,
+            ) from exc
+        except (error.URLError, OSError) as exc:
+            reason = getattr(exc, "reason", exc)
+            raise CodexAppServerRequestError(
+                f"Codex app-server transport failed: {reason}",
+                error_code="transport_error",
+            ) from exc
+        try:
+            body = raw_body.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise CodexAppServerRequestError(
+                "Codex app-server returned an incomplete or invalid response.",
+                error_code="invalid_response",
+            ) from exc
         if not body.strip():
-            return {}
-        parsed = json.loads(body)
+            raise CodexAppServerRequestError(
+                "Codex app-server returned an empty response.",
+                error_code="invalid_response",
+            )
+        try:
+            parsed = json.loads(body)
+        except json.JSONDecodeError as exc:
+            raise CodexAppServerRequestError(
+                "Codex app-server returned an incomplete or invalid response.",
+                error_code="invalid_response",
+            ) from exc
         if not isinstance(parsed, dict):
-            raise RuntimeError("Codex app-server returned a non-object JSON response.")
+            raise CodexAppServerRequestError(
+                "Codex app-server returned a non-object JSON response.",
+                error_code="invalid_response",
+            )
         return parsed
 
 

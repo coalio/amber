@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from functools import wraps
@@ -21,6 +22,15 @@ _LEVEL_COLORS = {
     "CRITICAL": "\033[1;31m",
 }
 _SAFE_VALUE_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.:/@+-")
+_SECRET_PATTERNS = (
+    re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"),
+    re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,})\b"),
+    re.compile(r"(?i)\b(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}"),
+    re.compile(
+        r"(?i)([\"']?(?:secretaccesskey|secret[_-]?access[_-]?key|api[_-]?key|access[_-]?token|"
+        r"refresh[_-]?token|password|authorization)[\"']?\s*[:=]\s*[\"']?)[^\s\"',}]{8,}"
+    ),
+)
 
 
 class HumanReadableFormatter(logging.Formatter):
@@ -30,7 +40,7 @@ class HumanReadableFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         source = _record_text(record, "event") or record.name
-        message = record.getMessage()
+        message = redact_sensitive_text(record.getMessage())
         context = getattr(record, "context", None)
         detail, context_text = _human_context(context)
         if detail is None and message != source:
@@ -45,7 +55,7 @@ class HumanReadableFormatter(logging.Formatter):
             line = f"{line}\n{self.formatException(record.exc_info)}"
         if record.stack_info:
             line = f"{line}\n{self.formatStack(record.stack_info)}"
-        return line
+        return redact_sensitive_text(line)
 
     def _level(self, level_name: str) -> str:
         label = f"[{level_name}]"
@@ -88,6 +98,14 @@ def get_logger(name: str) -> logging.Logger:
 
 def current_run_log_path() -> Path | None:
     return _RUN_LOG_PATH
+
+
+def redact_sensitive_text(text: str) -> str:
+    redacted = text
+    for index, pattern in enumerate(_SECRET_PATTERNS):
+        replacement = r"\1[REDACTED]" if index in {2, 3} else "[REDACTED]"
+        redacted = pattern.sub(replacement, redacted)
+    return redacted
 
 
 def _log_to_stderr_enabled() -> bool:
@@ -136,7 +154,7 @@ def _human_context(context: Any) -> tuple[str | None, str]:
 
     items = dict(context)
     detail = items.pop("message", None)
-    detail_text = str(detail) if detail is not None else None
+    detail_text = redact_sensitive_text(str(detail)) if detail is not None else None
     context_text = " ".join(f"{key}={_format_log_value(value)}" for key, value in items.items())
     return detail_text, context_text
 
@@ -149,10 +167,21 @@ def _format_log_value(value: Any) -> str:
     if isinstance(value, int | float):
         return str(value)
     if isinstance(value, str):
+        value = redact_sensitive_text(value)
         if value and all(character in _SAFE_VALUE_CHARS for character in value):
             return value
         return json.dumps(value, ensure_ascii=False)
-    return json.dumps(value, ensure_ascii=False, default=str)
+    return json.dumps(_redact_log_value(value), ensure_ascii=False, default=str)
+
+
+def _redact_log_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return redact_sensitive_text(value)
+    if isinstance(value, Mapping):
+        return {redact_sensitive_text(str(key)): _redact_log_value(item) for key, item in value.items()}
+    if isinstance(value, list | tuple | set):
+        return [_redact_log_value(item) for item in value]
+    return value
 
 
 def logged_entrypoint(event_name: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:

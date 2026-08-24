@@ -33,7 +33,14 @@ class GetTool(BaseTool):
             }
         access_error = session.tool_access_error(tool.name)
         if access_error is not None:
-            return {"enabled": False, "error": access_error}
+            result = {
+                "enabled": False,
+                "error": access_error,
+                "error_code": "codex_route_blocked",
+                "user_error": f"the task state machine blocked {tool.name}: {access_error}",
+            }
+            session.record_codex_failure(tool.name, result)
+            return result
         session.enable(tool.name)
         return {
             "enabled": True,

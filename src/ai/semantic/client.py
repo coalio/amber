@@ -158,11 +158,15 @@ class SemanticModelClient:
         started_task = self._started_codex_task(tools)
         submitted_reply = self._submitted_codex_reply(tools)
         work_dispatched = started_task is not None or submitted_reply is not None
+        failure_code, failure_message = self._codex_work_failure(tools) if not work_dispatched else (None, None)
+        recovered_task = bool(submitted_reply and submitted_reply.get("recovered"))
         decision = decision.model_copy(
             update={
                 "work_intent": "delegate" if work_dispatched else decision.work_intent,
                 "codex_work_dispatched": work_dispatched,
-                "codex_task_started": started_task is not None,
+                "codex_task_started": started_task is not None or recovered_task,
+                "codex_work_error_code": failure_code,
+                "codex_work_error": failure_message,
             }
         )
         if submitted_reply is not None:
@@ -236,8 +240,29 @@ class SemanticModelClient:
         if transition is not None and transition.tool_name == "CodexSendReply":
             result = transition.result
             if isinstance(result, dict) and not result.get("error") and result.get("submitted") is True:
-                return transition.arguments
+                recovered = bool(result.get("recovered"))
+                return {
+                    **transition.arguments,
+                    "app_server_id": result.get("app_server_id") or transition.arguments.get("app_server_id"),
+                    "task_id": result.get("task_id") or transition.arguments.get("task_id"),
+                    "tool_call_id": (
+                        None
+                        if recovered
+                        else result.get("tool_call_id") or transition.arguments.get("tool_call_id")
+                    ),
+                    "recovered": recovered,
+                }
         return None
+
+    def _codex_work_failure(self, tools: ToolSession | None) -> tuple[str | None, str | None]:
+        if tools is None or tools.last_codex_failure is None:
+            return None, None
+        result = tools.last_codex_failure.result
+        if not isinstance(result, dict) or not result.get("error"):
+            return None, None
+        error_code = str(result.get("error_code") or "codex_work_failed")
+        user_error = str(result.get("user_error") or "the codex worker could not complete the requested transition")
+        return error_code, user_error
 
     def decide_interruption(
         self,
@@ -315,11 +340,22 @@ class SemanticModelClient:
         started_task = self._started_codex_task(tools)
         submitted_reply = self._submitted_codex_reply(tools)
         if started_task is None and submitted_reply is None:
-            return decision.model_copy(update={"codex_work_dispatched": False, "codex_task_started": False})
+            failure_code, failure_message = self._codex_work_failure(tools)
+            return decision.model_copy(
+                update={
+                    "codex_work_dispatched": False,
+                    "codex_task_started": False,
+                    "codex_work_error_code": failure_code,
+                    "codex_work_error": failure_message,
+                }
+            )
+        recovered_task = bool(submitted_reply and submitted_reply.get("recovered"))
         update: dict[str, Any] = {
             "work_intent": "delegate",
             "codex_work_dispatched": True,
-            "codex_task_started": started_task is not None,
+            "codex_task_started": started_task is not None or recovered_task,
+            "codex_work_error_code": None,
+            "codex_work_error": None,
         }
         if submitted_reply is not None:
             update.update(

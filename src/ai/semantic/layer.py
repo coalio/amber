@@ -11,7 +11,7 @@ from src.ai.semantic.schema import InterruptionDecisionSchema, SemanticDecisionS
 from src.events.ai import SemanticDecisionMadeEvent, SemanticDecisionPayload
 from src.events.bus import EventBus, emitter_context
 from src.events.context import ContextFramePayload, ContextFrameReadyEvent
-from src.utils.logging import get_logger
+from src.utils.logging import get_logger, redact_sensitive_text
 
 
 @dataclass(frozen=True)
@@ -19,6 +19,7 @@ class HarnessFailure:
     code: str
     reason: str
     context: dict[str, Any]
+    user_reply: str | None = None
 
 
 class ConsciousHarness:
@@ -27,17 +28,34 @@ class ConsciousHarness:
 
     def evaluate(self, frame: ContextFramePayload, decision: SemanticDecisionSchema) -> HarnessFailure | None:
         if decision.work_intent == "delegate" and not decision.codex_work_dispatched:
-            return HarnessFailure(
-                code="delegated_work_requires_codex_dispatch",
-                reason=(
+            blocker = (decision.codex_work_error or "").strip()
+            blocker_code = (decision.codex_work_error_code or "").strip()
+            if blocker:
+                reason = (
+                    "The requested Codex transition failed with a verified runtime blocker"
+                    f"{f' ({blocker_code})' if blocker_code else ''}: {blocker}"
+                )
+                if blocker_code == "tool_output_conflict":
+                    user_reply = f"i couldn't apply that clarification because {blocker.rstrip('.')}"
+                else:
+                    user_reply = f"i couldn't complete that task because {blocker.rstrip('.')}"
+            else:
+                reason = (
                     "The visible conversation asks Amber to do work beyond answering, but no Codex transition "
                     "completed successfully in this turn. Resume a waiting clarification with CodexSendReply, "
                     "or start new work with CodexRunTask, before acknowledging the work."
-                ),
+                )
+                user_reply = "i couldn't complete that task because no work process could be started or resumed"
+            return HarnessFailure(
+                code="delegated_work_requires_codex_dispatch",
+                reason=reason,
                 context={
                     "current_message": self._message_subject(frame.current_message),
                     "recent_window": self._window_context(frame, decision),
+                    "codex_work_error_code": blocker_code or None,
+                    "codex_work_error": blocker or None,
                 },
+                user_reply=user_reply,
             )
         if frame.response_required and decision.action in {"ignore", "sleep"}:
             return HarnessFailure(
@@ -227,7 +245,7 @@ class ConsciousHarness:
         return subject
 
     def _preview(self, text: str, *, limit: int = 120) -> str:
-        compact = " ".join(text.split())
+        compact = " ".join(redact_sensitive_text(text).split())
         if len(compact) <= limit:
             return compact
         return f"{compact[: limit - 3]}..."
@@ -284,12 +302,12 @@ class AILayer:
                 )
             except Exception as exc:
                 self._log_semantic_exception(frame, exc, phase="retry", retry_index=retry_index)
-                return self._fallback_decision(frame, [*notes, "retry_failed"])
+                return self._fallback_decision(frame, [*notes, "retry_failed"], failure=failure)
             failure = self._harness.evaluate(frame, decision)
             if failure is None:
                 return self._normalize_decision(frame, decision)
             notes.append(failure.reason)
-        return self._fallback_decision(frame, notes)
+        return self._fallback_decision(frame, notes, failure=failure)
 
     def _call_interruption_with_harness(self, frame: ContextFramePayload) -> SemanticDecisionSchema:
         interruption = frame.pending_interruption
@@ -325,13 +343,17 @@ class AILayer:
                 )
             except Exception as exc:
                 self._log_semantic_exception(frame, exc, phase="interruption_retry", retry_index=retry_index)
-                return self._fallback_decision(frame, [*notes, "interruption_retry_failed"])
+                return self._fallback_decision(
+                    frame,
+                    [*notes, "interruption_retry_failed"],
+                    failure=failure,
+                )
             semantic_decision = self._normalize_interruption_result(frame, decision)
             failure = self._harness.evaluate_interruption(frame, decision, semantic_decision)
             if failure is None:
                 return self._normalize_decision(frame, semantic_decision)
             notes.append(failure.reason)
-        return self._fallback_decision(frame, notes)
+        return self._fallback_decision(frame, notes, failure=failure)
 
     def _build_retry_feedback(self, failure: HarnessFailure, retry_index: int) -> dict[str, Any]:
         return {
@@ -411,9 +433,14 @@ class AILayer:
         # codex metadata routes only; amber authors replies
         open_question = self._selected_open_question(frame, decision)
         if open_question is not None:
-            decision.codex_app_server_id = open_question.app_server_id
-            decision.codex_task_id = open_question.task_id
-            decision.codex_tool_call_id = open_question.tool_call_id
+            recovered_clarification = decision.codex_work_dispatched and decision.codex_task_started
+            if recovered_clarification:
+                # CodexSendReply recovered a lost process into a new task on the same thread.
+                decision.codex_tool_call_id = None
+            else:
+                decision.codex_app_server_id = open_question.app_server_id
+                decision.codex_task_id = open_question.task_id
+                decision.codex_tool_call_id = open_question.tool_call_id
             candidate_by_sender = {candidate.sender_id: candidate for candidate in open_question.candidate_people}
             candidate_by_chat = {str(candidate.chat_id): candidate for candidate in open_question.candidate_people}
             selected = candidate_by_sender.get(decision.codex_target_sender_id or "") or candidate_by_chat.get(str(decision.chat_id))
@@ -519,6 +546,8 @@ class AILayer:
             work_intent=decision.work_intent,
             codex_work_dispatched=decision.codex_work_dispatched,
             codex_task_started=decision.codex_task_started,
+            codex_work_error_code=decision.codex_work_error_code,
+            codex_work_error=decision.codex_work_error,
             reply_to_message_id=decision.reply_to_message_id,
             chat_id=frame.chat_id,
             reply_text=decision.reply_text,
@@ -547,14 +576,41 @@ class AILayer:
             visible_read_through_message_id=frame.visible_read_through_message_id,
         )
 
-    def _fallback_decision(self, frame: ContextFramePayload, notes: list[str]) -> SemanticDecisionSchema:
-        if frame.response_required:
-            fallback_notes = [*notes, "required_response_fallback"]
+    def _fallback_decision(
+        self,
+        frame: ContextFramePayload,
+        notes: list[str],
+        *,
+        failure: HarnessFailure | None = None,
+    ) -> SemanticDecisionSchema:
+        blocker_reply = failure.user_reply if failure is not None else None
+        if frame.response_required or blocker_reply is not None:
+            fallback_notes = list(notes)
+            if frame.response_required:
+                fallback_notes.append("required_response_fallback")
+            if blocker_reply is not None:
+                fallback_notes.append("codex_work_failure_fallback")
+            if failure is not None:
+                fallback_notes.append(f"harness_failure:{failure.code}")
             return SemanticDecisionSchema(
                 action="reply",
+                work_intent="delegate" if blocker_reply is not None else "none",
+                codex_work_error_code=(
+                    str(failure.context.get("codex_work_error_code") or "") or None
+                    if failure is not None
+                    else None
+                ),
+                codex_work_error=(
+                    str(failure.context.get("codex_work_error") or "") or None
+                    if failure is not None
+                    else None
+                ),
                 reply_to_message_id=frame.recommended_reply_candidate or frame.current_message.message_id,
                 chat_id=frame.chat_id,
-                reply_text="i'm here, but i need a minute to answer properly",
+                reply_text=(
+                    blocker_reply
+                    or "i couldn't complete that request because i couldn't produce a valid response"
+                ),
                 referenced_memory_ids=[],
                 confidence=0.1,
                 notes=fallback_notes,

@@ -26,10 +26,17 @@ class CompletedCodexTransition:
     result: Any
 
 
+@dataclass(frozen=True)
+class FailedCodexTransition:
+    tool_name: str
+    result: Any
+
+
 class CodexWorkStateMachine:
     def __init__(self, route: CodexWorkRoute = CodexWorkRoute.UNRESTRICTED) -> None:
         self._route = route
         self._completed: CompletedCodexTransition | None = None
+        self._last_failure: FailedCodexTransition | None = None
 
     @property
     def route(self) -> CodexWorkRoute:
@@ -38,6 +45,10 @@ class CodexWorkStateMachine:
     @property
     def completed(self) -> CompletedCodexTransition | None:
         return deepcopy(self._completed)
+
+    @property
+    def last_failure(self) -> FailedCodexTransition | None:
+        return deepcopy(self._last_failure)
 
     def access_error(self, tool_name: str) -> str | None:
         requested_route = _TOOL_ROUTES.get(tool_name)
@@ -76,13 +87,24 @@ class CodexWorkStateMachine:
         return True, deepcopy(self._completed.result)
 
     def record(self, tool_name: str, arguments: dict[str, Any], result: Any) -> None:
-        if self._completed is not None or tool_name not in _TOOL_ROUTES or not self._succeeded(tool_name, result):
+        if self._completed is not None or tool_name not in _TOOL_ROUTES:
+            return
+        if not self._succeeded(tool_name, result):
+            if (
+                self._last_failure is not None
+                and isinstance(result, dict)
+                and result.get("error_code") == "codex_route_blocked"
+            ):
+                # A model's disallowed fallback attempt must not hide the concrete failure that caused it.
+                return
+            self._last_failure = FailedCodexTransition(tool_name=tool_name, result=deepcopy(result))
             return
         self._completed = CompletedCodexTransition(
             tool_name=tool_name,
             arguments=deepcopy(arguments),
             result=deepcopy(result),
         )
+        self._last_failure = None
 
     def _succeeded(self, tool_name: str, result: Any) -> bool:
         if not isinstance(result, dict) or result.get("error"):

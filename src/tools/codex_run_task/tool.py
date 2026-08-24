@@ -81,88 +81,7 @@ class CodexRunTask(BaseTool):
     required_arguments = ("task_description", "context")
 
     def run(self, arguments: dict[str, Any], session: ToolSession) -> dict[str, Any]:
-        if session.runtime.adapter_registry is None:
-            return {"error": "Adapter registry is not available."}
-        try:
-            adapter = session.runtime.adapter_registry.require("codex")
-        except RuntimeError as exc:
-            return {"error": str(exc)}
-        if not isinstance(adapter, CodexAdapter):
-            return {"error": "Configured codex adapter has the wrong type."}
-        raw_context = arguments.get("context") or {}
-        if not isinstance(raw_context, dict):
-            return {"error": "context must be an object."}
-        context = self._normalized_context(raw_context)
-        linear_issue_id = str(context.get("linear_issue_id") or "").strip()
-        resume_thread_id = self._resume_thread_id(context, linear_issue_id, session)
-        try:
-            if resume_thread_id and hasattr(adapter, "continue_task"):
-                task = adapter.continue_task(
-                    thread_id=resume_thread_id,
-                    task_description=str(arguments.get("task_description") or ""),
-                    context={**context, "codex_thread_id": resume_thread_id},
-                )
-            else:
-                task = adapter.start_task(
-                    task_description=str(arguments.get("task_description") or ""),
-                    context=context,
-                )
-        except RuntimeError as exc:
-            if linear_issue_id and session.runtime.state_store is not None:
-                session.runtime.state_store.mark_linear_task_error(
-                    issue_id=linear_issue_id,
-                    error=str(exc),
-                    timestamp=utc_now(),
-                )
-            return {"error": str(exc)}
-
-        # persist live provenance before any reply can become a follow-up anchor
-        if session.runtime.state_store is not None:
-            session.runtime.state_store.mark_codex_task_turn(
-                app_server_id=task.app_server_id,
-                task_id=task.task_id,
-                thread_id=task.thread_id or resume_thread_id,
-                turn_id=task.turn_id,
-                status=task.status,
-                updated_at=utc_now(),
-            )
-        if linear_issue_id and session.runtime.state_store is not None:
-            session.runtime.state_store.mark_linear_task_started(
-                issue_id=linear_issue_id,
-                codex_app_server_id=task.app_server_id,
-                codex_task_id=task.task_id,
-                codex_thread_id=task.thread_id or resume_thread_id,
-                codex_turn_id=task.turn_id,
-                started_at=utc_now(),
-            )
-            try:
-                set_linear_status(
-                    session.runtime.adapter_registry,
-                    issue_id=linear_issue_id,
-                    status="in_progress",
-                    note=f"Amber started Codex task {task.task_id}.",
-                )
-            except RuntimeError as exc:
-                session.runtime.state_store.mark_linear_task_last_error(issue_id=linear_issue_id, error=str(exc))
-            with emitter_context("tool.linear"):
-                EventBus.emit(
-                    LinearQueueWakeRequestedEvent(
-                        chat_id="linear:queue",
-                        payload=LinearQueueWakeRequestedPayload(
-                            reason="linear_task_started",
-                            issue_id=linear_issue_id,
-                            requested_at=utc_now(),
-                        ),
-                    )
-                )
-        return {
-            "app_server_id": task.app_server_id,
-            "task_id": task.task_id,
-            "status": task.status,
-            "thread_id": task.thread_id or resume_thread_id,
-            "turn_id": task.turn_id,
-            "resumed": bool(resume_thread_id),
-        }
+        return dispatch_codex_task(arguments, session)
 
     def _normalized_context(self, raw_context: dict[str, Any]) -> dict[str, Any]:
         context = dict(raw_context)
@@ -184,3 +103,114 @@ class CodexRunTask(BaseTool):
         if task.queue_status not in {"under_review", "waiting_for_user"}:
             return None
         return task.codex_thread_id
+
+
+def dispatch_codex_task(arguments: dict[str, Any], session: ToolSession) -> dict[str, Any]:
+    if session.runtime.adapter_registry is None:
+        return _dispatch_error(
+            "adapter_registry_unavailable",
+            "the codex worker is not configured in this Amber runtime",
+            "Adapter registry is not available.",
+        )
+    try:
+        adapter = session.runtime.adapter_registry.require("codex")
+    except RuntimeError as exc:
+        return _dispatch_error("codex_adapter_unavailable", "the codex worker adapter is unavailable", str(exc))
+    if not isinstance(adapter, CodexAdapter):
+        return _dispatch_error(
+            "codex_adapter_invalid",
+            "the configured codex worker adapter is invalid",
+            "Configured codex adapter has the wrong type.",
+        )
+    raw_context = arguments.get("context") or {}
+    if not isinstance(raw_context, dict):
+        return _dispatch_error("invalid_task_context", "the task context was malformed", "context must be an object.")
+    task_description = str(arguments.get("task_description") or "").strip()
+    if not task_description:
+        return _dispatch_error(
+            "invalid_task_description",
+            "the task description was empty, so no codex worker was started",
+            "task_description must contain non-empty text.",
+        )
+
+    # resolve whether this is a new turn or a continuation before changing external state
+    tool = CodexRunTask()
+    context = tool._normalized_context(raw_context)
+    linear_issue_id = str(context.get("linear_issue_id") or "").strip()
+    resume_thread_id = tool._resume_thread_id(context, linear_issue_id, session)
+    try:
+        if resume_thread_id:
+            task = adapter.continue_task(
+                thread_id=resume_thread_id,
+                task_description=task_description,
+                context={**context, "codex_thread_id": resume_thread_id},
+            )
+        else:
+            task = adapter.start_task(
+                task_description=task_description,
+                context=context,
+            )
+    except RuntimeError as exc:
+        if linear_issue_id and session.runtime.state_store is not None:
+            session.runtime.state_store.mark_linear_task_error(
+                issue_id=linear_issue_id,
+                error=str(exc),
+                timestamp=utc_now(),
+            )
+        return _dispatch_error("codex_task_start_failed", "the codex worker could not start or resume the task", str(exc))
+
+    # persist live provenance before any reply can become a follow-up anchor
+    if session.runtime.state_store is not None:
+        session.runtime.state_store.mark_codex_task_turn(
+            app_server_id=task.app_server_id,
+            task_id=task.task_id,
+            thread_id=task.thread_id or resume_thread_id,
+            turn_id=task.turn_id,
+            status=task.status,
+            updated_at=utc_now(),
+        )
+    if linear_issue_id and session.runtime.state_store is not None:
+        session.runtime.state_store.mark_linear_task_started(
+            issue_id=linear_issue_id,
+            codex_app_server_id=task.app_server_id,
+            codex_task_id=task.task_id,
+            codex_thread_id=task.thread_id or resume_thread_id,
+            codex_turn_id=task.turn_id,
+            started_at=utc_now(),
+        )
+        try:
+            set_linear_status(
+                session.runtime.adapter_registry,
+                issue_id=linear_issue_id,
+                status="in_progress",
+                note=f"Amber started Codex task {task.task_id}.",
+            )
+        except RuntimeError as exc:
+            session.runtime.state_store.mark_linear_task_last_error(issue_id=linear_issue_id, error=str(exc))
+        with emitter_context("tool.linear"):
+            EventBus.emit(
+                LinearQueueWakeRequestedEvent(
+                    chat_id="linear:queue",
+                    payload=LinearQueueWakeRequestedPayload(
+                        reason="linear_task_started",
+                        issue_id=linear_issue_id,
+                        requested_at=utc_now(),
+                    ),
+                )
+            )
+    return {
+        "app_server_id": task.app_server_id,
+        "task_id": task.task_id,
+        "status": task.status,
+        "thread_id": task.thread_id or resume_thread_id,
+        "turn_id": task.turn_id,
+        "resumed": bool(resume_thread_id),
+    }
+
+
+def _dispatch_error(error_code: str, user_error: str, detail: str) -> dict[str, Any]:
+    return {
+        "error": detail,
+        "error_code": error_code,
+        "user_error": user_error,
+    }

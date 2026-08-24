@@ -380,7 +380,6 @@ class ContextLayer:
                 for candidate in question.candidate_people
             ],
             created_at=created_at,
-            expires_at=created_at + timedelta(minutes=15),
         )
 
     def handle_message_read(self, event: MessageReadEvent) -> None:

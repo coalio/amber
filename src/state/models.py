@@ -58,7 +58,8 @@ class OpenQuestion(BaseModel):
     user_replies: list[str] = Field(default_factory=list)
     user_reply_message_ids: list[int] = Field(default_factory=list)
     created_at: datetime
-    expires_at: datetime
+    # retained only so workspaces created by older releases still load
+    expires_at: datetime | None = Field(default=None, exclude=True)
     status: str = "open"
 
 

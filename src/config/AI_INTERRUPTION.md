@@ -39,5 +39,5 @@ Rules:
 - Keep the reply text short and substance-first.
 - The normal semantic safety rules still apply.
 - Set `work_intent` from the whole visible conversation. If the interruption answers an active `open_question`, use `delegate` and call only `CodexSendReply`. For other work beyond answering, use `delegate` and call `CodexRunTask`.
-- Return `codex_work_dispatched=false` and `codex_task_started=false` for runtime verification.
+- Return `codex_work_dispatched=false`, `codex_task_started=false`, `codex_work_error_code=null`, and `codex_work_error=null` for runtime verification.
 - Return `codex_app_server_id` and `codex_task_id` as null; the runtime fills them after a verified task start.

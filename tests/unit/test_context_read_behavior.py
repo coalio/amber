@@ -739,6 +739,26 @@ def test_debounce_counts_from_latest_surfaced_message(tmp_path, monkeypatch: pyt
     assert scheduled[-1][1] > 0
 
 
+def test_idle_expiry_preserves_messages_waiting_for_debounce(tmp_path, monkeypatch) -> None:
+    context_layer = _build_context_layer(tmp_path)
+    message = _message_payload(412, "pending request")
+    session = ConversationSession(
+        session_id="sess_pending", chat_id=1001001001, last_updated_at=utc_now(),
+        pending_surfaced_messages={412: message}, pending_first_surfaced_at=utc_now(),
+        pending_latest_surfaced_at=utc_now(), idle_expire_at=utc_now() - timedelta(seconds=1),
+    )
+    context_layer._active_session = session
+    scheduled = []
+    monkeypatch.setattr(context_layer, "_schedule_finalize", lambda item: scheduled.append(item))
+
+    context_layer._expire_session(session.session_id)
+
+    assert context_layer._active_session is session
+    assert context_layer._session_idle_expired(session, utc_now()) is False
+    assert session.pending_surfaced_messages == {412: message}
+    assert scheduled == [session]
+
+
 def test_resolve_session_rotates_when_idle_deadline_has_passed(tmp_path) -> None:
     context_layer = _build_context_layer(tmp_path)
     expired_session = ConversationSession(

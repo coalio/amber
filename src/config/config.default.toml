@@ -7,7 +7,7 @@ api_key = "none"
 model = "gpt-5.4"
 semantic_retry_budget = 3
 max_reply_chars = 1600
-max_output_tokens = 1200
+max_output_tokens = 4096
 temperature = 0.3
 
 [telegram]

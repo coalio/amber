@@ -11,6 +11,7 @@ from openai.lib._pydantic import to_strict_json_schema
 from src.providers.openai.models import get_openai_model_contract
 from src.tools.registry import ToolSession
 from src.utils.openai import extract_response_text
+from src.utils.logging import get_logger
 
 
 SchemaT = TypeVar("SchemaT")
@@ -129,12 +130,12 @@ class OpenAIProvider:
 
     def _create_response(self, request: dict[str, Any], *, tools: ToolSession | None = None):
         if tools is None:
-            return self._client.responses.create(**request)
+            return self._create_complete_response(request)
 
         active_request = dict(request)
         for _ in range(8):
             active_request["tools"] = tools.tool_definitions()
-            response = self._client.responses.create(**active_request)
+            response = self._create_complete_response(active_request)
             tool_calls = self._function_tool_calls(response)
             if not tool_calls:
                 return response
@@ -152,6 +153,26 @@ class OpenAIProvider:
                 for call in tool_calls
             ]
         raise RuntimeError("Tool call loop exceeded maximum iterations.")
+
+    def _create_complete_response(self, request: dict[str, Any]):
+        # retry only this generation, before parsing or executing any of its tool calls
+        active_request = dict(request)
+        for attempt in range(3):
+            response = self._client.responses.create(**active_request)
+            status = self._field(response, "status")
+            if status not in {"incomplete", "failed", "cancelled"}:
+                return response
+            reason = self._field(self._field(response, "incomplete_details"), "reason", status)
+            if status != "incomplete" or reason != "max_output_tokens" or attempt == 2:
+                raise RuntimeError(f"Structured response did not complete ({reason}).")
+            active_request["max_output_tokens"] *= 2
+            get_logger("amber.provider").warning(
+                "provider.incomplete_retry",
+                extra={"event": "provider.incomplete_retry", "context": {
+                    "reason": reason, "attempt": attempt + 1,
+                    "max_output_tokens": active_request["max_output_tokens"],
+                }},
+            )
 
     def _function_tool_calls(self, response: Any) -> list[_FunctionToolCall]:
         calls: list[_FunctionToolCall] = []

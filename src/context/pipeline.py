@@ -736,7 +736,7 @@ class ContextLayer:
     def _session_idle_expired(self, session: ConversationSession, now) -> bool:
         if session.idle_expire_at is None or session.idle_expire_at > now:
             return False
-        if session.frame_in_flight:
+        if session.frame_in_flight or session.pending_surfaced_messages:
             return False
         return self._active_typing_until(session, now) is None
 
@@ -1214,6 +1214,10 @@ class ContextLayer:
     def _expire_session(self, session_id: str) -> None:
         with emitter_context("context"):
             if self._active_session is None or self._active_session.session_id != session_id:
+                return
+            # queued input owns the session until debounce and typing gates release it
+            if self._active_session.pending_surfaced_messages and not self._active_session.frame_in_flight:
+                self._schedule_finalize(self._active_session)
                 return
             if self._active_session.frame_in_flight:
                 self._logger.info(

@@ -546,6 +546,7 @@ class AILayer:
         return SemanticDecisionSchema(
             action=decision.action,
             work_intent=decision.work_intent,
+            work_acknowledged=decision.work_acknowledged,
             codex_work_dispatched=decision.codex_work_dispatched,
             codex_task_started=decision.codex_task_started,
             codex_work_error_code=decision.codex_work_error_code,

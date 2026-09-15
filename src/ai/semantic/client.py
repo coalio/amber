@@ -155,7 +155,7 @@ class SemanticModelClient:
             codex_workflow=session_state.codex_workflow,
         )
         if self._acknowledge_work is not None and route == CodexWorkRoute.START_TASK and (
-            frame.linear_task_list is None and frame.pending_interruption is None
+            frame.linear_task_list is None
         ):
             def acknowledge() -> None:
                 if session_state.acknowledgement_message_id is None:
@@ -354,7 +354,15 @@ class SemanticModelClient:
             }
             if tools is not None:
                 request["tools"] = tools
-            decision, response_id = structured_with_metadata(**request)
+            try:
+                decision, response_id = structured_with_metadata(**request)
+            except Exception:
+                if self._started_codex_task(tools) is None:
+                    raise
+                decision = InterruptionDecisionSchema(
+                    interrupt_decision="accept", action="ignore", reason="work dispatched", confidence=1.0,
+                )
+                response_id = None
             if response_id:
                 session_state.previous_response_id = response_id
             return self._finalize_interruption_work_decision(frame, decision, tools)
@@ -378,51 +386,16 @@ class SemanticModelClient:
         decision: InterruptionDecisionSchema,
         tools: ToolSession | None,
     ) -> InterruptionDecisionSchema:
-        # carry verified work state through interruption normalization
-        started_task = self._started_codex_task(tools)
-        submitted_reply = self._submitted_codex_reply(tools)
-        if started_task is None and submitted_reply is None:
-            failure_code, failure_message = self._codex_work_failure(tools)
-            return decision.model_copy(
-                update={
-                    "codex_work_dispatched": False,
-                    "codex_task_started": False,
-                    "codex_work_error_code": failure_code,
-                    "codex_work_error": failure_message,
-                }
-            )
-        recovered_task = bool(submitted_reply and submitted_reply.get("recovered"))
-        update: dict[str, Any] = {
-            "work_intent": "delegate",
-            "codex_work_dispatched": True,
-            "codex_task_started": started_task is not None or recovered_task,
-            "codex_work_error_code": None,
-            "codex_work_error": None,
-        }
-        if submitted_reply is not None:
-            update.update(
-                {
-                    "codex_app_server_id": str(submitted_reply.get("app_server_id") or "") or None,
-                    "codex_task_id": str(submitted_reply.get("task_id") or "") or None,
-                }
-            )
-        elif started_task is not None:
-            update.update(
-                {
-                    "codex_app_server_id": str(started_task.get("app_server_id") or "") or None,
-                    "codex_task_id": str(started_task.get("task_id") or "") or None,
-                }
-            )
-        if started_task is not None and (decision.action != "reply" or not (decision.reply_text or "").strip()):
-            update.update(
-                {
-                    "interrupt_decision": "accept",
-                    "action": "reply",
-                    "reply_to_message_id": frame.current_message.message_id,
-                    "reply_text": self._CODEX_TASK_STARTED_ACK,
-                    "confidence": max(decision.confidence, 0.9),
-                }
-            )
+        # interrupted turns use the same receipt, provenance, and dispatch contract
+        semantic = SemanticDecisionSchema(chat_id=frame.chat_id, **{
+            key: value for key, value in decision.model_dump().items()
+            if key in SemanticDecisionSchema.model_fields
+        })
+        finalized = self._finalize_work_decision(frame, semantic, tools)
+        update = {key: value for key, value in finalized.model_dump().items()
+                  if key in InterruptionDecisionSchema.model_fields}
+        if self._started_codex_task(tools) is not None:
+            update["interrupt_decision"] = "accept"
         return decision.model_copy(update=update)
 
     def _build_input_items(

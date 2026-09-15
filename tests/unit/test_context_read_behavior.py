@@ -650,7 +650,8 @@ def test_expire_session_waits_while_engaged_participant_is_typing(tmp_path, monk
     assert scheduled[-1][1] >= 1.0
 
 
-def test_pending_frame_waits_while_engaged_participant_is_typing(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("typing_before_session", [False, True])
+def test_pending_frame_waits_while_engaged_participant_is_typing(tmp_path, monkeypatch: pytest.MonkeyPatch, typing_before_session) -> None:
     context_layer = _build_context_layer(tmp_path)
     message = _message_payload(412, "one more thought")
     session = ConversationSession(
@@ -665,7 +666,8 @@ def test_pending_frame_waits_while_engaged_participant_is_typing(tmp_path, monke
         pending_first_surfaced_at=utc_now() - timedelta(seconds=10),
         pending_latest_surfaced_at=utc_now() - timedelta(seconds=10),
     )
-    context_layer._active_session = session
+    if not typing_before_session:
+        context_layer._active_session = session
     frames: list[ContextFrameReadyEvent] = []
     scheduled: list[tuple[str, float, tuple[object, ...]]] = []
     EventBus.subscribe("ContextFrameReadyEvent", frames.append)
@@ -688,6 +690,7 @@ def test_pending_frame_waits_while_engaged_participant_is_typing(tmp_path, monke
         )
     )
 
+    context_layer._active_session = session
     context_layer._finalize_session(session.session_id)
 
     assert frames == []

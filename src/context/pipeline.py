@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import random
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from src.attention.memory.store import MemoryStore
 from src.adapters.registry import AdapterRegistry
@@ -70,6 +70,7 @@ class ContextLayer:
         self._adapter_registry = adapter_registry
         self._active_session: ConversationSession | None = None
         self._pending_codex_questions: dict[str, CodexQuestionPayload] = {}
+        self._typing_by_chat_sender: dict[tuple[str, str], datetime] = {}
         EventBus.subscribe("AttentionDecisionMadeEvent", self.handle_attention_decision)
         EventBus.subscribe("CodexQuestionReceivedEvent", self.handle_codex_question)
         EventBus.subscribe("CodexNotificationReceivedEvent", self.handle_codex_notification)
@@ -420,6 +421,16 @@ class ContextLayer:
 
     def handle_typing_update(self, event: TelegramTypingUpdatedEvent) -> None:
         with emitter_context("context"):
+            # typing may overtake the attention event that creates the conversation session
+            key = (str(event.payload.chat_id), event.payload.sender.id)
+            now = utc_now()
+            self._typing_by_chat_sender = {
+                item: expires for item, expires in self._typing_by_chat_sender.items() if expires > now
+            }
+            if event.payload.active and event.payload.expires_at is not None:
+                self._typing_by_chat_sender[key] = event.payload.expires_at
+            else:
+                self._typing_by_chat_sender.pop(key, None)
             session = self._active_session
             if session is None:
                 return
@@ -719,6 +730,10 @@ class ContextLayer:
         )
 
     def _active_typing_until(self, session: ConversationSession, now):
+        # include unexpired activity received before attention established the session
+        for (chat_id, sender_id), expires in self._typing_by_chat_sender.items():
+            if chat_id == str(session.chat_id) and sender_id in session.engaged_user_ids and expires > now:
+                session.typing_until_by_sender[sender_id] = expires
         session.typing_until_by_sender = {
             sender_id: expires_at
             for sender_id, expires_at in session.typing_until_by_sender.items()

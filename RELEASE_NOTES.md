@@ -1,12 +1,15 @@
-# Amber 0.5.2
+# Amber 0.5.3
 
 ## Fixed
 
-- Verify that every semver-tagged package contains the requested Amber version before it is cached, recovered, extracted, or activated.
-- Ignore stale temporary downloads and poisoned cache entries instead of installing the largest readable archive under the wrong release tag.
-- Reject mismatched downloaded, URL, and explicitly supplied archives before changing the active release symlink.
+- Preserve complete credential values when authorized workspace owners provide them for delegated Codex tasks and clarification replies.
+- Keep secret non-disclosure rules scoped to user-facing replies, logs, and durable records so they do not redact internal execution input.
+
+## Changed
+
+- Document branch-based development in the main repository checkout without requiring additional worktrees.
 
 ## Validation
 
-- The 245-test unit suite includes stale temporary recovery, wrong-version caches, mismatched upstream downloads, explicit archive rejection, and preservation of the active release on failure.
-- Three fixture-driven work-mode integration tests cover task delegation and Codex event delivery.
+- The 246-test unit suite includes release-policy precedence, exact clarification forwarding, and secret-free logging coverage.
+- Focused regressions verify that stale workspace guidance cannot reintroduce credential handoff redaction.

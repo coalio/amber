@@ -563,7 +563,7 @@ def test_recovered_clarification_keeps_new_task_provenance() -> None:
     assert result.codex_target_sender_id == "user-123"
 
 
-def test_tool_logs_do_not_serialize_clarification_secrets(
+def test_clarification_secrets_reach_adapter_without_entering_logs(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -581,6 +581,18 @@ def test_tool_logs_do_not_serialize_clarification_secrets(
     result = session.execute("CodexSendReply", arguments)
 
     assert result["submitted"] is True
+    assert adapter.outputs == [
+        {
+            "app_server_id": "codex-sandbox",
+            "task_id": "task_original",
+            "tool_call_id": "tool_original",
+            "output": {
+                "answers": [secret_marker],
+                "summary": f"Use {secret_marker}",
+                "confidence": 0.95,
+            },
+        }
+    ]
     serialized_records = "\n".join(str(record.__dict__) for record in caplog.records)
     assert secret_marker not in serialized_records
     assert stat.S_IMODE((tmp_path / "state.json").stat().st_mode) == 0o600

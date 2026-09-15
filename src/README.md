@@ -26,9 +26,13 @@ receiver -> attention -> context -> ai -> outbound -> action
 - [adapters](./adapters/README.md): wraps external systems used by tools and receivers.
 - [hooks](./hooks/README.md): installs configured lifecycle hooks into the Codex sandbox.
 - [tools](./tools/README.md): exposes work-mode tool calls to the semantic model.
+- [workflows](./workflows/README.md): coordinates receipt delivery and task dispatch across layers.
+- [gateway](./gateway/README.md): local operator protocol, CLI, and runtime capture observation.
 - [providers](./providers/README.md): wraps model-provider APIs.
 - [utils](./utils/README.md): shared runtime utilities.
 
 ## Investigation Path
 
 For a user-visible Telegram reply, start with [receiver/telegram](./receiver/telegram), follow the event types in [events](./events), then inspect the matching layer README. For startup, auth, or workspace problems, start with [config](./config/README.md), [cli.py](./cli.py), and [runtime.py](./runtime.py).
+
+Task dispatch is an explicit application workflow alongside the reply pipeline: `CodexRunTask -> TaskDispatchWorkflow -> Action receipt -> Codex adapter`. The AI layer receives the verified dispatch result; it neither owns the receipt callback nor mutates delivery state. Trusted task origin travels separately from model-authored task context and is resolved by Action's delivery policy.

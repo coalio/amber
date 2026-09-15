@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -9,6 +8,8 @@ from typing import Any
 from src.adapters.registry import AdapterRegistry
 from src.attention.memory.store import MemoryStore
 from src.state.store import GlobalStateStore
+from src.events.delivery import ToolInvocation
+from src.workflows.task_dispatch import TaskDispatchWorkflow
 from src.tools.base import BaseTool
 from src.tools.codex_send_reply import CodexSendReply
 from src.tools.codex_run_task import CodexRunTask
@@ -30,7 +31,9 @@ class ToolRuntime:
     state_store: GlobalStateStore | None = None
     telegram_transport: Any | None = None
     codex_workspace: Path | None = None
-    source_chat_id: int | str | None = None
+    invocation: ToolInvocation | None = None
+    task_dispatcher: TaskDispatchWorkflow | None = None
+    delivery_policy: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -98,7 +101,6 @@ class ToolSession:
         self._enabled_tool_names: list[str] = [GET_TOOL_NAME]
         self._executions: list[ToolExecution] = []
         self._codex_workflow = codex_workflow or CodexWorkStateMachine(codex_work_route)
-        self.before_codex_dispatch: Callable[[], None] | None = None
 
     def enable(self, name: str) -> None:
         if self.registry.get(name) is None:

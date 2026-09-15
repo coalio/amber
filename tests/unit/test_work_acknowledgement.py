@@ -9,6 +9,7 @@ from src.ai.semantic.layer import AILayer, ConsciousHarness
 from src.events.context import PendingInterruptionPayload
 from src.ai.config import AIConfig
 from src.tools.registry import ToolRuntime, default_tool_registry
+from src.workflows.task_dispatch import TaskDispatchWorkflow
 from tests.unit.test_semantic_client_session_history import _config, _frame, _message
 
 
@@ -27,8 +28,9 @@ def test_receipt_is_delivered_before_worker_and_survives_failed_generation(inter
     adapter.start_task = lambda **kwargs: order.append("worker") or CodexTask("fixture", "task_fixture", "running")
     registry = AdapterRegistry()
     registry.register(adapter)
-    config = replace(_config(default_tool_registry()), tool_runtime=ToolRuntime(adapter_registry=registry))
-    client = SemanticModelClient(config, DispatchProvider(), acknowledge_work=lambda frame: order.append("receipt") or 42)
+    workflow = TaskDispatchWorkflow(registry, None, deliver_receipt=lambda receipt: order.append("receipt") or 42)
+    config = replace(_config(default_tool_registry()), tool_runtime=ToolRuntime(adapter_registry=registry, task_dispatcher=workflow))
+    client = SemanticModelClient(config, DispatchProvider())
     frame = _frame(session_id="receipt", trigger_message_id=412, messages=[_message(412, "user-123", "Fixture", "inspect")])
     frame.response_required = True
     if interrupted:
@@ -56,8 +58,10 @@ def test_failed_receipt_prevents_worker_start():
         raise RuntimeError("delivery unavailable")
 
     client = SemanticModelClient(
-        replace(_config(default_tool_registry()), tool_runtime=ToolRuntime(adapter_registry=registry)),
-        DispatchProvider(), acknowledge_work=fail_receipt,
+        replace(_config(default_tool_registry()), tool_runtime=ToolRuntime(
+            adapter_registry=registry, task_dispatcher=TaskDispatchWorkflow(registry, None, deliver_receipt=fail_receipt),
+        )),
+        DispatchProvider(),
     )
     frame = _frame(session_id="receipt", trigger_message_id=412, messages=[_message(412, "user-123", "Fixture", "inspect")])
     with pytest.raises(RuntimeError, match="delivery unavailable"):

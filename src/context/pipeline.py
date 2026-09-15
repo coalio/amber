@@ -141,6 +141,7 @@ class ContextLayer:
                     chat_id=event.chat_id,
                     payload=ContextFramePayload(
                         session_id=f"codex:{question.task_id}",
+                        task_origin=question.origin,
                         chat_id=event.chat_id or f"codex:{question.task_id}",
                         trigger_message_id=0,
                         current_message=current_message,
@@ -247,6 +248,7 @@ class ContextLayer:
                     chat_id=event.chat_id,
                     payload=ContextFramePayload(
                         session_id=f"codex-notify:{notification.app_server_id}:{notification.task_id}",
+                        task_origin=notification.origin,
                         chat_id=event.chat_id or f"codex:{notification.task_id}",
                         trigger_message_id=0,
                         current_message=current_message,

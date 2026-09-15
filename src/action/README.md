@@ -33,5 +33,7 @@ Action should not call the semantic model or re-score attention.
 
 - Telegram delivery code is in `telegram/layer.py`.
 - Transport-specific send/read behavior is in `telegram/transport.py`.
+- Local operator capture and route resolution are in `gateway.py`; `delivery.py` constrains file recipients to trusted task origins.
+- Application workflows may request a synchronous `WorkReceipt`. Action accepts this delivery contract, not a context frame, and returns the delivered message id before dispatch proceeds.
 - Pacing and retry settings are loaded through `ActionConfig`.
 - Keep side effects idempotent where possible because Action may observe retries or repeated events.

@@ -38,6 +38,9 @@ class TelegramReceiver:
 
         # backfill missed replies to active codex questions
         for question in state.open_questions.values():
+            # transport backfill applies only to native numeric telegram conversations
+            if not isinstance(question.chat_id, int):
+                continue
             min_id = 0
             if state.delivery_state.get("last_outbound_chat_id") == question.chat_id:
                 min_id = int(state.delivery_state.get("last_outbound_message_id") or 0)
@@ -134,6 +137,9 @@ class TelegramReceiver:
                 expires_at=now + timedelta(seconds=6) if active else None,
             ),
         )
+        await self.receive_typing(normalized)
+
+    async def receive_typing(self, normalized: TelegramTypingUpdatedEvent) -> None:
         await asyncio.to_thread(self._emit_typing_update, normalized)
 
     def _emit_typing_update(self, normalized: TelegramTypingUpdatedEvent) -> None:

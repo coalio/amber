@@ -74,6 +74,10 @@ model = "gpt-5.5"
 reasoning_effort = "xhigh"
 auto_update = true
 
+[hooks]
+repository = "https://github.com/coalio/codex-hooks"
+revision = "1416ddb8de550eac0889c4dae08a514707a7c999"
+
 [linear]
 enabled = true
 api_key = "none"

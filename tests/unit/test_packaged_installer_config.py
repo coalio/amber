@@ -18,7 +18,9 @@ ROOT = Path(__file__).resolve().parents[2]
 
 class _SetupProbeHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
-        self._send_json({"ok": True, "runner": "codex-cli", "yolo_mode": True})
+        self._send_json(
+            {"ok": True, "runner": "codex-cli", "yolo_mode": True, "protocol_version": 2}
+        )
 
     def do_POST(self) -> None:  # noqa: N802
         content_length = int(self.headers.get("Content-Length", "0"))

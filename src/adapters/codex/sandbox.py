@@ -6,6 +6,7 @@ from collections.abc import Callable
 
 from src.adapters.codex.adapter import CodexAdapter
 from src.config.config import Settings
+from src.hooks import HookConfig
 from src.utils.process import run_host_command
 
 
@@ -36,6 +37,7 @@ def build_codex_adapter(
         auto_update=settings.codex_auto_update,
         system_prompt_path=settings.codex_system_prompt_path,
         skill_paths=settings.codex_skill_paths,
+        hook_config=HookConfig.from_settings(settings),
         command_runner=command_runner,
         progress_callback=progress_callback,
         release_version=settings.release_version,

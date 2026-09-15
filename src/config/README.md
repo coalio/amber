@@ -14,6 +14,8 @@ Important environment variables:
 - `API_ID` and `API_HASH`: Telegram credential overrides.
 - `OPENAI_API_KEY`: fallback for the Amber AI API key.
 
+Codex hook packages are configured in `[hooks]`. `repository` selects a compatible Git repository and `revision` pins its branch, tag, or commit. Set `repository = "none"` to disable installation.
+
 ## Workspaces
 
 `workspace.py` creates workspace directories, copies editable prompts and Codex skills, writes initial config, and renders systemd user units. `doctor.py` owns workspace diagnostics and Codex container repair.

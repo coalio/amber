@@ -21,6 +21,7 @@ from src.config.codex_skills import (
     PYTHON_STYLE_RULES_SKILL,
     codex_skill_paths,
 )
+from src.hooks import CodexHookInstaller, HookConfig
 from src.utils.ids import new_event_id
 from src.utils.logging import get_logger
 from src.utils.process import run_host_command
@@ -126,6 +127,7 @@ class CodexAdapter(BaseAdapter):
         auto_update: bool = True,
         system_prompt_path: Path | None = None,
         skill_paths: tuple[Path, ...] | None = None,
+        hook_config: HookConfig | None = None,
         command_runner=subprocess.run,
         progress_callback: Callable[[str], None] | None = None,
         release_version: str = "development",
@@ -155,6 +157,12 @@ class CodexAdapter(BaseAdapter):
         self._command_runner = command_runner
         self._progress_callback = progress_callback
         self._release_version = release_version
+        self._hook_installer = CodexHookInstaller(
+            hook_config or HookConfig(),
+            container_name=container_name,
+            sandbox_runner=self._run,
+            progress_callback=progress_callback,
+        )
         self._handlers: dict[str, CodexQuestionHandler] = {}
         self._notification_handlers: dict[str, CodexNotificationHandler] = {}
         self._task_completed_handlers: dict[str, CodexTaskCompletedHandler] = {}
@@ -251,6 +259,7 @@ class CodexAdapter(BaseAdapter):
             "codex_model": self._codex_model,
             "codex_reasoning_effort": self._codex_reasoning_effort,
             "codex_skills": self._codex_skills_for_task(task_description, raw_context),
+            "installed_hooks_enabled": self._hook_installer.enabled,
             "mode": "headless",
             "nuance_tolerance": "zero",
             "clarification_policy": {
@@ -444,11 +453,13 @@ class CodexAdapter(BaseAdapter):
         self._codex_home_dir.chmod(0o700)
         if self._container_uses_runtime_image() and self._app_server_is_healthy():
             self._ensure_codex_updated()
+            self._hook_installer.install()
             self._progress("codex app-server is already running")
             self._ensure_event_polling()
             return
         self._ensure_dependency_image()
         self._ensure_container()
+        self._hook_installer.install()
         self._install_app_server_script()
         self._recreate_container_if_port_forward_is_stale()
         self._ensure_codex_updated()
@@ -491,6 +502,7 @@ class CodexAdapter(BaseAdapter):
             payload.get("ok") is True
             and payload.get("runner") == "codex-cli"
             and payload.get("yolo_mode") is True
+            and payload.get("protocol_version") == 2
         )
 
     def _container_uses_runtime_image(self) -> bool:

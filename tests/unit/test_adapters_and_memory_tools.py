@@ -229,7 +229,7 @@ def test_codex_adapter_health_uses_runtime_signals() -> None:
         "ok": True,
         "runner": "codex-cli",
         "yolo_mode": True,
-        "protocol_version": 2,
+        "protocol_version": 3,
     }
 
     adapter._get_json = lambda path, timeout=1: payload

@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, urlparse
 
 
 APP_SERVER_ID = "codex-sandbox"
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 SERVER_INSTANCE_ID = f"server_{uuid.uuid4().hex}"
 YOLO_MODE = True
 TASKS: dict[str, dict[str, Any]] = {}
@@ -867,6 +867,7 @@ class CodexTaskRunner:
     ) -> None:
         if self.client is None:
             return
+        context = self._event_context(context)
         self._last_assistant_message = ""
         self._terminal_user_event_recorded = True
         self.pending_tool_calls[tool_call_id] = PendingToolCall(
@@ -932,6 +933,7 @@ class CodexTaskRunner:
         context: dict[str, Any],
         clear_assistant_message: bool = False,
     ) -> dict[str, Any]:
+        context = self._event_context(context)
         notification_id = _next_id("amber_notify")
         notification = {
             "notification_id": notification_id,
@@ -966,6 +968,15 @@ class CodexTaskRunner:
                 }
             )
         return notification
+
+    def _event_context(self, context: dict[str, Any]) -> dict[str, Any]:
+        # worker-authored details cannot discard or redirect the trusted task origin
+        task_context = self.payload.get("context") or {}
+        merged = {**task_context, **context}
+        merged.pop("amber_gateway_chat_id", None)
+        if "amber_gateway_chat_id" in task_context:
+            merged["amber_gateway_chat_id"] = task_context["amber_gateway_chat_id"]
+        return merged
 
     def _report_pull_request(self, request_id: int, arguments: dict[str, Any]) -> None:
         event_type = str(arguments.get("event_type") or "").strip()

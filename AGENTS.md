@@ -4,7 +4,7 @@ These rules apply to the entire repository.
 
 ## Branches And Pull Requests
 
-- Never develop directly on `master`. Use a worktree with a `feature/<slug>`, `fix/<slug>`, or `release/X.Y.Z` branch.
+- Never develop directly on `master`. Create and switch to a `feature/<slug>`, `fix/<slug>`, or `release/X.Y.Z` branch in the main repository checkout.
 - Every change reaches `master` through a pull request with required checks passing.
 - Preserve release branches after merge so the preparation history remains auditable.
 - Rebase-merge release pull requests so individual Conventional Commits remain in `master` without an extra merge commit.

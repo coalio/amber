@@ -24,6 +24,7 @@ receiver -> attention -> context -> ai -> outbound -> action
 - [config](./config/README.md): loads settings, prompts, resources, and workspaces.
 - [state](./state/README.md): persists durable runtime state.
 - [adapters](./adapters/README.md): wraps external systems used by tools and receivers.
+- [hooks](./hooks/README.md): installs configured lifecycle hooks into the Codex sandbox.
 - [tools](./tools/README.md): exposes work-mode tool calls to the semantic model.
 - [providers](./providers/README.md): wraps model-provider APIs.
 - [utils](./utils/README.md): shared runtime utilities.

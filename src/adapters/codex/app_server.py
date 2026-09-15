@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, urlparse
 
 
 APP_SERVER_ID = "codex-sandbox"
+PROTOCOL_VERSION = 2
 SERVER_INSTANCE_ID = f"server_{uuid.uuid4().hex}"
 YOLO_MODE = True
 TASKS: dict[str, dict[str, Any]] = {}
@@ -54,6 +55,7 @@ def _health_payload() -> dict[str, Any]:
         "server_instance_id": SERVER_INSTANCE_ID,
         "runner": "codex-cli",
         "yolo_mode": YOLO_MODE,
+        "protocol_version": PROTOCOL_VERSION,
     }
 
 
@@ -65,6 +67,7 @@ def _health_url_is_ready(host: str, port: int) -> bool:
         and payload.get("ok") is True
         and payload.get("runner") == "codex-cli"
         and payload.get("yolo_mode") is True
+        and payload.get("protocol_version") == PROTOCOL_VERSION
     )
 
 
@@ -469,6 +472,7 @@ class CodexTaskRunner:
                 },
             )
             self.client.notify("initialized", {})
+            self._configure_installed_hooks()
             self._start_thread()
             self._start_turn()
             # a blocked dynamic tool call is token-idle and must wait for the user without a deadline
@@ -481,6 +485,62 @@ class CodexTaskRunner:
             with LOCK:
                 if RUNNERS.get(self.task_id) is self:
                     RUNNERS.pop(self.task_id, None)
+
+    def _configure_installed_hooks(self) -> None:
+        hooks_enabled = bool(self.payload.get("installed_hooks_enabled"))
+        hook_file = "/codex-home/.codex/hooks.json"
+        if not hooks_enabled and not os.path.exists(hook_file):
+            return
+        if self.client is None:
+            raise RuntimeError("codex app-server client is not running")
+
+        # discover only the global hook file installed into amber's codex home
+        response = self.client.request("hooks/list", {"cwds": ["/work"]})
+        entries = response.get("data") if isinstance(response.get("data"), list) else []
+        installed_hooks = [
+            hook
+            for entry in entries
+            if isinstance(entry, dict)
+            for hook in entry.get("hooks", [])
+            if isinstance(hook, dict)
+            and hook.get("source") == "user"
+            and hook.get("sourcePath") == hook_file
+        ]
+        if not installed_hooks:
+            if hooks_enabled:
+                raise RuntimeError("Configured Codex hooks were installed but no global hooks were discovered.")
+            return
+
+        # align enablement and trust only exact hashes from amber's configured global file
+        state_updates: dict[str, dict[str, Any]] = {}
+        for hook in installed_hooks:
+            key = str(hook.get("key") or "")
+            if not key:
+                continue
+            if not hooks_enabled:
+                if hook.get("enabled") is True:
+                    state_updates[key] = {"enabled": False}
+                continue
+            current_hash = str(hook.get("currentHash") or "")
+            if not current_hash:
+                continue
+            if hook.get("enabled") is not True or hook.get("trustStatus") != "trusted":
+                state_updates[key] = {"enabled": True, "trusted_hash": current_hash}
+        if not state_updates:
+            return
+        self.client.request(
+            "config/batchWrite",
+            {
+                "edits": [
+                    {
+                        "keyPath": "hooks.state",
+                        "value": state_updates,
+                        "mergeStrategy": "upsert",
+                    }
+                ],
+                "reloadUserConfig": True,
+            },
+        )
 
     def _codex_command(self) -> list[str]:
         command = ["codex"]

@@ -53,9 +53,26 @@ def test_settings_load_workspace_toml_and_env_overrides(monkeypatch, tmp_path) -
     assert settings.ai_model == "gpt-test"
     assert settings.codex_container_name == "amber-indiedreamers-codex"
     assert settings.codex_podman_cgroup_manager is None
+    assert settings.hooks_repository == "https://github.com/coalio/codex-hooks"
+    assert settings.hooks_revision == "1416ddb8de550eac0889c4dae08a514707a7c999"
     assert settings.telegram_session_path == workspace / "telegram" / "telegram.session"
     assert settings.memories_dir == workspace / "memories"
     assert settings.codex_workdir == workspace / "codex" / "work"
+
+    get_settings.cache_clear()
+
+
+def test_workspace_can_disable_default_codex_hooks(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("AMBER_HOME", str(tmp_path / ".amber"))
+    get_settings.cache_clear()
+
+    workspace = init_workspace("indiedreamers")
+    config_path = workspace / "config.toml"
+    data = load_workspace_config(config_path)
+    data["hooks"]["repository"] = "none"
+    write_workspace_config(config_path, data)
+
+    assert get_settings("indiedreamers").hooks_repository is None
 
     get_settings.cache_clear()
 

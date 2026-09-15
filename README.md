@@ -129,7 +129,7 @@ Amber installs the application once and keeps your data in workspaces:
 
 The files you are most likely to edit are:
 
-- `config.toml` for model, Telegram, Linear, timing, and runtime settings.
+- `config.toml` for model, Telegram, Linear, Codex hooks, timing, and runtime settings.
 - `prompts/*.md` for workspace-specific voice and behavior.
 - `codex-skills/codex-development/SKILL.md` for Amber's general development workflow.
 - `codex-skills/codex-pr-reviews/SKILL.md` for pull-request feedback handling.

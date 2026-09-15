@@ -229,11 +229,23 @@ def test_codex_adapter_health_uses_runtime_signals() -> None:
         "ok": True,
         "runner": "codex-cli",
         "yolo_mode": True,
+        "protocol_version": 2,
     }
 
     adapter._get_json = lambda path, timeout=1: payload
 
     assert adapter._app_server_is_healthy() is True
+
+
+def test_codex_adapter_rejects_an_older_app_server_protocol() -> None:
+    adapter = CodexAdapter()
+    adapter._get_json = lambda path, timeout=1: {
+        "ok": True,
+        "runner": "codex-cli",
+        "yolo_mode": True,
+    }
+
+    assert adapter._app_server_is_healthy() is False
 
 
 def test_codex_adapter_decodes_pull_request_events() -> None:
@@ -307,6 +319,7 @@ def test_codex_start_task_includes_user_interaction_tools() -> None:
         "AmberReportPullRequest",
     ]
     assert captured["payload"]["release_version"] == "development"
+    assert captured["payload"]["installed_hooks_enabled"] is True
 
 
 def test_codex_start_task_does_not_log_task_contents(caplog: pytest.LogCaptureFixture) -> None:

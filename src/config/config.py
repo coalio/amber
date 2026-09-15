@@ -93,6 +93,8 @@ class Settings(BaseModel):
     codex_auto_update: bool
     codex_system_prompt_path: Path
     codex_skill_paths: tuple[Path, ...]
+    hooks_repository: str | None
+    hooks_revision: str
     linear_enabled: bool
     linear_api_key: str | None
     linear_api_url: str
@@ -180,6 +182,8 @@ ENV_OVERRIDES: dict[str, tuple[str, ...]] = {
     "AMBER_CODEX_MODEL": ("codex", "model"),
     "AMBER_CODEX_REASONING_EFFORT": ("codex", "reasoning_effort"),
     "AMBER_CODEX_AUTO_UPDATE": ("codex", "auto_update"),
+    "AMBER_HOOKS_REPOSITORY": ("hooks", "repository"),
+    "AMBER_HOOKS_REVISION": ("hooks", "revision"),
     "AMBER_LINEAR_ENABLED": ("linear", "enabled"),
     "AMBER_LINEAR_API_KEY": ("linear", "api_key"),
     "AMBER_LINEAR_API_URL": ("linear", "api_url"),
@@ -366,6 +370,8 @@ def _get_settings_cached(workspace_key: str | None, config_key: str | None) -> S
         codex_auto_update=_bool_value(_value(data, ("codex", "auto_update"))),
         codex_system_prompt_path=system_dir / "CODEX_SYSTEM.md",
         codex_skill_paths=codex_skill_paths(skill_dir),
+        hooks_repository=_optional_str(_value_or_none(data, ("hooks", "repository"))),
+        hooks_revision=str(_value(data, ("hooks", "revision"))).strip(),
         linear_enabled=_bool_value(_value(data, ("linear", "enabled"))),
         linear_api_key=_optional_str(_value_or_none(data, ("linear", "api_key"))),
         linear_api_url=str(_value(data, ("linear", "api_url"))),

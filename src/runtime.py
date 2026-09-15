@@ -148,7 +148,6 @@ def build_application(
         telegram_transport=transport,
         codex_workspace=settings.codex_workdir,
     )
-    semantic_client = semantic_client or SemanticModelClient(semantic_config, ModelProviderGateway(semantic_config).provider)
     attention_layer = AttentionLayer(AttentionConfig.from_settings(settings), scorer, state_store, memory_store, message_archive)
     context_layer = ContextLayer(
         ContextConfig.from_settings(settings),
@@ -159,7 +158,6 @@ def build_application(
         settings.timezone_name,
         adapter_registry=adapter_registry,
     )
-    ai_layer = AILayer(AIConfig.from_settings(settings), semantic_client)
     outbound_preparation_layer = OutboundPreparationLayer(OutboundPreparationConfig.from_settings(settings), state_store)
     action_layer = ActionLayer(
         ActionConfig.from_settings(settings),
@@ -169,6 +167,11 @@ def build_application(
         message_archive,
         settings.timezone_name,
     )
+    semantic_client = semantic_client or SemanticModelClient(
+        semantic_config, ModelProviderGateway(semantic_config).provider,
+        acknowledge_work=action_layer.acknowledge_work,
+    )
+    ai_layer = AILayer(AIConfig.from_settings(settings), semantic_client)
     return AmberApplication(
         settings=settings,
         state_store=state_store,

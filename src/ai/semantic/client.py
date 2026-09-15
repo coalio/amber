@@ -104,7 +104,7 @@ class SemanticModelClient:
                 decision, response_id = structured_with_metadata(**request)
             except Exception:
                 # a failed post-dispatch generation cannot undo work that already started
-                if self._started_codex_task(tools) is None:
+                if self._started_codex_task(tools) is None and self._submitted_codex_reply(tools) is None:
                     raise
                 decision = SemanticDecisionSchema(action="ignore", chat_id=frame.chat_id, confidence=1.0)
                 response_id = None
@@ -176,16 +176,20 @@ class SemanticModelClient:
         work_dispatched = started_task is not None or submitted_reply is not None
         failure_code, failure_message = self._codex_work_failure(tools) if not work_dispatched else (None, None)
         recovered_task = bool(submitted_reply and submitted_reply.get("recovered"))
+        acknowledged = bool((started_task or submitted_reply or {}).get("work_acknowledged"))
         decision = decision.model_copy(
             update={
                 "work_intent": "delegate" if work_dispatched else decision.work_intent,
                 "codex_work_dispatched": work_dispatched,
                 "codex_task_started": started_task is not None or recovered_task,
-                "work_acknowledged": False,
+                "work_acknowledged": acknowledged,
                 "codex_work_error_code": failure_code,
                 "codex_work_error": failure_message,
             }
         )
+        if acknowledged:
+            # suppress duplicate receipts for both ordinary starts and recovered clarifications
+            decision = decision.model_copy(update={"action": "ignore", "reply_text": None, "reply_to_message_id": None})
         if submitted_reply is not None:
             return decision.model_copy(
                 update={
@@ -203,12 +207,8 @@ class SemanticModelClient:
                 "codex_tool_call_id": None,
             }
         )
-        if started_task.get("work_acknowledged"):
-            # the workflow result is authoritative; model output cannot repeat its receipt
-            return decision.model_copy(update={
-                "action": "ignore", "reply_text": None, "reply_to_message_id": None,
-                "work_acknowledged": True,
-            })
+        if acknowledged:
+            return decision
         return self._acknowledge_started_codex_task(frame, decision)
 
     def _acknowledge_started_codex_task(
@@ -274,6 +274,7 @@ class SemanticModelClient:
                         else result.get("tool_call_id") or transition.arguments.get("tool_call_id")
                     ),
                     "recovered": recovered,
+                    "work_acknowledged": bool(result.get("work_acknowledged")),
                 }
         return None
 
@@ -338,7 +339,7 @@ class SemanticModelClient:
             try:
                 decision, response_id = structured_with_metadata(**request)
             except Exception:
-                if self._started_codex_task(tools) is None:
+                if self._started_codex_task(tools) is None and self._submitted_codex_reply(tools) is None:
                     raise
                 decision = InterruptionDecisionSchema(
                     interrupt_decision="accept", action="ignore", reason="work dispatched", confidence=1.0,

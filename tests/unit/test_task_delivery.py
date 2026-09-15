@@ -13,6 +13,8 @@ from src.action.telegram.transport import RecordingTransport
 from src.adapters.codex import CodexAdapter, CodexNotification, CodexTask
 from src.adapters.codex import app_server
 from src.adapters.registry import AdapterRegistry
+from src.ai.semantic.client import SemanticModelClient
+from src.ai.semantic.schema import SemanticDecisionSchema
 from src.attention.memory.store import MemoryStore
 from src.events.bus import EventBus
 from src.events.delivery import TaskOrigin, ToolInvocation
@@ -22,6 +24,10 @@ from src.state.gateway import GatewayStore
 from src.state.store import GlobalStateStore
 from src.tools.registry import ToolRuntime, default_tool_registry
 from src.workflows.task_dispatch import TaskDispatchWorkflow
+from tests.unit.test_codex_clarification_resilience import (
+    _RestartAwareAdapter, _frame_with_answered_question, _reply_session, _state_with_question, _valid_reply_arguments,
+)
+from tests.unit.test_semantic_client_session_history import _config
 
 
 def test_dispatch_keeps_origin_out_of_model_context_and_anchors_receipt(tmp_path):
@@ -163,3 +169,31 @@ def test_telegram_backlog_skips_non_native_conversations():
     ))
     receiver = TelegramReceiver(client, object(), state)
     asyncio.run(receiver.replay_open_question_backlog())
+
+
+@pytest.mark.parametrize("generation_fails", [False, True])
+def test_recovered_clarification_retains_receipt_after_model_generation(tmp_path, generation_fails):
+    state = _state_with_question(tmp_path / "state.json")
+    adapter = _RestartAwareAdapter()
+    runtime = _reply_session(state, adapter).runtime
+    receipts = []
+    runtime.task_dispatcher = TaskDispatchWorkflow(
+        runtime.adapter_registry, state, deliver_receipt=lambda receipt: receipts.append(receipt) or 42,
+    )
+
+    class Provider:
+        def generate_structured_with_metadata(self, **request):
+            tools = request["tools"]
+            tools.enable("CodexSendReply")
+            tools.execute("CodexSendReply", _valid_reply_arguments())
+            if generation_fails:
+                raise RuntimeError("post-recovery generation failed")
+            return SemanticDecisionSchema(action="reply", chat_id=1001001001, reply_text="resuming", confidence=1), None
+
+    client = SemanticModelClient(replace(_config(default_tool_registry()), tool_runtime=runtime), Provider())
+    result = client.decide(_frame_with_answered_question())
+    assert len(receipts) == 1
+    assert len(adapter.continuations) == 1
+    assert result.work_acknowledged and result.codex_task_started
+    assert result.codex_task_id == "task_recovered"
+    assert result.action == "ignore"

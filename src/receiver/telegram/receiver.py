@@ -55,7 +55,9 @@ class TelegramReceiver:
 
     async def _on_new_message(self, event: events.NewMessage.Event) -> None:
         normalized = await self.normalize_message(event.message)
+        await self.receive(normalized)
 
+    async def receive(self, normalized: TelegramMessageReceivedEvent) -> None:
         # archive before downstream context reads
         self._message_archive.put(normalized.payload)
         self._record_open_question_reply(normalized)

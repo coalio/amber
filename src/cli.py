@@ -33,6 +33,9 @@ HELP_COMMANDS = {
     "uninstall",
     "version",
     "workspace",
+    "gateway",
+    "send",
+    "events",
 }
 HELP_ACCENT_OPTIONS = {"--workspace"}
 
@@ -58,6 +61,11 @@ def _main(argv: list[str] | None = None) -> int:
         return _service(args)
     if args.command == "attention":
         return _attention(args)
+    if args.command == "gateway":
+        from src.config.config import get_settings
+        from src.gateway.cli import run_gateway
+        settings = get_settings(args.workspace)
+        return asyncio.run(run_gateway(args, settings.runtime_state_path.parent / "gateway.sock"))
     if args.command == "version":
         return _version()
     parser.print_help()
@@ -204,6 +212,24 @@ def _build_parser() -> argparse.ArgumentParser:
     check_parser.add_argument("--quiet", action="store_true", help="Only report failures.")
 
     subparsers.add_parser("version", help="Print Amber release information.")
+    gateway = subparsers.add_parser("gateway", help="Inject Telegram-shaped messages into the running workspace.")
+    gateway_commands = gateway.add_subparsers(dest="gateway_command", required=True, parser_class=AmberArgumentParser)
+    send = gateway_commands.add_parser("send", help="Run an admin message; capture replies locally. Tasks execute normally.")
+    send.add_argument("--workspace", required=True)
+    send.add_argument("--as", dest="sender", required=True, help="Allowlisted Telegram administrator id.")
+    send.add_argument("--message", action="append", required=True, help="Message text; repeat to test a burst.")
+    send.add_argument("--session", help="Continue a gateway conversation.")
+    send.add_argument("--reply-to", type=int, help="Gateway reply message id.")
+    send.add_argument("--interval", type=float, default=0, help="Seconds between messages.")
+    send.add_argument("--typing-seconds", type=float, default=0, help="Simulate typing between messages (up to 60 seconds).")
+    send.add_argument("--wait", choices=("none", "reply", "task"), default="reply")
+    send.add_argument("--timeout", type=float, default=120, help="Observation timeout; does not cancel work.")
+    events = gateway_commands.add_parser("events", help="Read a gateway conversation and its delivery timings.")
+    events.add_argument("--workspace", required=True)
+    events.add_argument("--session", required=True)
+    events.add_argument("--follow", action="store_true")
+    events.add_argument("--wait", choices=("reply", "task"), default="task")
+    events.add_argument("--timeout", type=float, default=120)
     return parser
 
 

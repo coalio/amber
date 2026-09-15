@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 
 from src.adapters.codex import CodexAdapter, CodexNotification, CodexQuestion
 from src.attention.memory.store import MemoryStore
@@ -20,12 +20,14 @@ class CodexReceiver:
         adapter: CodexAdapter,
         memory_store: MemoryStore,
         allowlisted_sender_ids: Iterable[str],
+        candidate_resolver: Callable[[dict], list[dict] | None] | None = None,
     ) -> None:
         self._adapter = adapter
         self._memory_store = memory_store
         self._allowlisted_sender_ids = tuple(str(sender_id).removeprefix("user") for sender_id in allowlisted_sender_ids)
         self._question_subscription_id: str | None = None
         self._notification_subscription_id: str | None = None
+        self._candidate_resolver = candidate_resolver
 
     def register(self) -> None:
         if self._question_subscription_id is None:
@@ -42,7 +44,7 @@ class CodexReceiver:
             self._notification_subscription_id = None
 
     def _handle_question(self, question: CodexQuestion) -> None:
-        candidates = self._allowlisted_candidates()
+        candidates = self._candidates(question.context)
         with emitter_context("receiver.codex"):
             EventBus.emit(
                 CodexQuestionReceivedEvent(
@@ -61,7 +63,7 @@ class CodexReceiver:
             )
 
     def _handle_notification(self, notification: CodexNotification) -> None:
-        candidates = self._allowlisted_candidates()
+        candidates = self._candidates(notification.context)
         with emitter_context("receiver.codex"):
             EventBus.emit(
                 CodexNotificationReceivedEvent(
@@ -85,3 +87,10 @@ class CodexReceiver:
             candidate.model_dump(mode="json")
             for candidate in self._memory_store.list_allowlisted_profiles(self._allowlisted_sender_ids)
         ]
+
+    def _candidates(self, context: dict) -> list[dict]:
+        if self._candidate_resolver is not None:
+            candidates = self._candidate_resolver(context)
+            if candidates is not None:
+                return candidates
+        return self._allowlisted_candidates()

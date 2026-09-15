@@ -39,6 +39,9 @@ from src.adapters.codex import CodexTaskLifecycleHandler
 from src.utils.logging import configure_logging
 from src.utils.message_archive import MessageArchive
 from src.utils.scheduler import RuntimeScheduler
+from src.gateway.server import GatewayServer
+from src.gateway.store import GatewayStore
+from src.gateway.transport import GatewayTransport
 
 
 @dataclass
@@ -60,6 +63,7 @@ class AmberApplication:
     codex_task_lifecycle_handler: CodexTaskLifecycleHandler | None = None
     linear_receiver: LinearReceiver | None = None
     telegram_client: TelegramClient | None = None
+    gateway: GatewayServer | None = None
 
     async def run_telegram_forever(self) -> None:
         if self.telegram_client is None or self.receiver is None:
@@ -74,7 +78,13 @@ class AmberApplication:
         await self.telegram_client.start()
         await self.receiver.replay_open_question_backlog()
         self.action_layer.sync_presence_from_state()
-        await self.telegram_client.run_until_disconnected()
+        if self.gateway is not None:
+            await self.gateway.start()
+        try:
+            await self.telegram_client.run_until_disconnected()
+        finally:
+            if self.gateway is not None:
+                await self.gateway.close()
 
 
 def build_application(
@@ -105,7 +115,11 @@ def build_application(
         status_names=settings.linear_issue_status_targets,
     )
     adapter_registry.register(linear_adapter)
-    codex_receiver = CodexReceiver(codex_adapter, memory_store, settings.always_surface_telegram_ids)
+    gateway_store = GatewayStore(settings.runtime_state_path.parent / "gateway", settings.always_surface_telegram_ids)
+    codex_receiver = CodexReceiver(
+        codex_adapter, memory_store, settings.always_surface_telegram_ids,
+        candidate_resolver=gateway_store.candidates,
+    )
     codex_task_lifecycle_handler = CodexTaskLifecycleHandler(
         codex_adapter,
         adapter_registry=adapter_registry,
@@ -136,7 +150,7 @@ def build_application(
             # bind telegram transport to the loop that will drive the runtime
             loop = asyncio.get_running_loop()
             telegram_client = TelegramClient(str(telegram_config.session_path), int(telegram_config.api_id), telegram_config.api_hash, loop=loop)
-            transport = TelegramTransport(telegram_client, loop)
+            transport = GatewayTransport(TelegramTransport(telegram_client, loop), gateway_store)
             receiver = TelegramReceiver(telegram_client, message_archive, state_store, transport)
         else:
             transport = RecordingTransport()
@@ -171,7 +185,9 @@ def build_application(
         semantic_config, ModelProviderGateway(semantic_config).provider,
         acknowledge_work=action_layer.acknowledge_work,
     )
+    gateway_store.register(codex_adapter)
     ai_layer = AILayer(AIConfig.from_settings(settings), semantic_client)
+    gateway = GatewayServer(settings.runtime_state_path.parent / "gateway.sock", receiver, gateway_store) if receiver else None
     return AmberApplication(
         settings=settings,
         state_store=state_store,
@@ -190,6 +206,7 @@ def build_application(
         codex_task_lifecycle_handler=codex_task_lifecycle_handler,
         linear_receiver=linear_receiver,
         telegram_client=telegram_client,
+        gateway=gateway,
     )
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
 from src.ai.semantic.config import SemanticConfig
@@ -145,8 +145,13 @@ class SemanticModelClient:
             session_state.codex_workflow_trigger_message_id = frame.trigger_message_id
             session_state.codex_workflow = CodexWorkStateMachine(route)
             session_state.acknowledgement_message_id = None
+        source_chat_id = frame.chat_id
+        for source in (frame.codex_notification, frame.open_question):
+            if source is not None and source.context.get("amber_gateway_chat_id"):
+                source_chat_id = source.context["amber_gateway_chat_id"]
         tools = self._config.tool_registry.new_session(
-            runtime=self._config.tool_runtime,
+            runtime=(replace(self._config.tool_runtime, source_chat_id=source_chat_id)
+                     if self._config.tool_runtime is not None else None),
             codex_workflow=session_state.codex_workflow,
         )
         if self._acknowledge_work is not None and route == CodexWorkRoute.START_TASK and (

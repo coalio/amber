@@ -1,17 +1,17 @@
-# Amber 0.6.0
+# Amber 0.7.0
 
 ## Added
 
-- Install the `coalio/codex-hooks` review gate by default at a pinned revision in each workspace's persistent Codex home.
-- Configure the hook repository and revision through the workspace `[hooks]` table, including `repository = "none"` disablement.
+- `amber gateway send --workspace <workspace> --as=<admin-id> --message "..."` exercises the running chat pipeline with real model calls and workers, while capturing replies locally.
+- Repeat `--message` to test bursts, simulate typing with `--typing-seconds`, continue with `--session`, and inspect durable timestamped captures with `amber gateway events`.
 
-## Changed
+## Fixed
 
-- Trust only exact global hook hashes reported by Codex, without trusting repository-local hooks.
-- Preserve first-install conflict protection and use upstream backup behavior for updates from the same Amber-managed hook repository.
-- Restart older Codex app-server protocol instances so hook installation and trust take effect after an Amber upgrade.
+- Deliver the work receipt before starting the worker. Follow-up messages cannot cancel it, and later model failures cannot conceal a successful task start.
+- Retry token-limited structured responses before parsing or executing their tool calls. The default output budget is now 4096 tokens.
+- Preserve messages waiting for debounce when the idle timeout expires, honor longer configured debounce windows, and retain typing activity received before session creation.
 
-## Validation
+## Upgrade Notes
 
-- The 256-test unit suite covers hook configuration, installation, disablement, trust scoping, and app-server upgrade detection.
-- The pinned hook package passes its 37-test upstream suite through Amber's generated first-install and managed-update paths.
+- Existing workspace settings and customized prompts remain preserved. A zero `context.debounce_seconds` disables batching; use 5 seconds for the standard quiet window.
+- Gateway commands require a running workspace and an allowlisted administrator. Replies stay local; requested tasks and model calls execute normally.

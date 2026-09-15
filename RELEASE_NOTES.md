@@ -1,18 +1,19 @@
-# Amber 0.7.0
-
-## Added
-
-- `amber gateway send --workspace <workspace> --as=<admin-id> --message "..."` exercises the running chat pipeline with real model calls and workers, while capturing replies locally.
-- Repeat `--message` to test bursts, simulate typing with `--typing-seconds`, continue with `--session`, and inspect durable timestamped captures with `amber gateway events`.
+# Amber 0.7.1
 
 ## Fixed
 
-- Deliver the work receipt before starting the worker. Follow-up messages cannot cancel it, and later model failures cannot conceal a successful task start.
-- Retry token-limited structured responses before parsing or executing their tool calls. The default output budget is now 4096 tokens.
-- Preserve messages waiting for debounce when the idle timeout expires, honor longer configured debounce windows, and retain typing activity received before session creation.
-- Preserve the originating task context on worker notifications and questions, including local gateway routing. Older worker servers are refreshed automatically.
+- Isolate acknowledgement-before-worker ordering in an application workflow. The semantic model receives the verified result without controlling receipt delivery or delivery-state updates.
+- Carry immutable task origin separately from model-authored context through worker questions, notifications, and completion events. Unknown or revoked delivery routes cannot fall back to real Telegram recipients.
+- Keep file replies bound to the task's trusted delivery route, even when model arguments request a different recipient.
+- Skip local gateway conversations during Telegram backlog replay after restart.
+
+## Internal Boundaries
+
+- Gateway ingress now belongs to Receiver, local transport and routing to Action, and capture persistence to State. The gateway package owns only its operator protocol, CLI, and event observation.
+- Gateway ingress uses public message and typing boundaries with injected reply lookup. Source-map and subsystem documentation describe the ownership contracts.
 
 ## Upgrade Notes
 
-- Existing workspace settings and customized prompts remain preserved. A zero `context.debounce_seconds` disables batching; use 5 seconds for the standard quiet window.
-- Gateway commands require a running workspace and an allowlisted administrator. Replies stay local; requested tasks and model calls execute normally.
+- Includes the 0.7.0 gateway command, typing-aware batching, acknowledgement ordering, and bounded retries for token-limited model responses.
+- Existing workspace settings, customized prompts, CLI flags, and durable gateway captures remain compatible.
+- Worker protocol 4 carries trusted origin in the task envelope; Amber automatically refreshes older worker servers.

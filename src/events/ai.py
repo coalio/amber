@@ -14,6 +14,7 @@ class SemanticDecisionPayload(BaseModel):
     work_intent: str = "none"
     codex_work_dispatched: bool = False
     codex_task_started: bool = False
+    work_acknowledged: bool = False
     codex_work_error_code: str | None = None
     codex_work_error: str | None = None
     reply_to_message_id: int | None = None

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -13,6 +14,7 @@ from src.events.context import ContextFrameMessagePayload, ContextFramePayload, 
 from src.providers.base import ModelProvider
 from src.tools.codex_workflow import CodexWorkRoute, CodexWorkStateMachine
 from src.tools.registry import ToolSession
+from src.utils.time import utc_now
 
 
 class SemanticClient(Protocol):
@@ -44,16 +46,21 @@ class SemanticSessionState:
     previous_response_id: str | None = None
     codex_workflow_trigger_message_id: int | None = None
     codex_workflow: CodexWorkStateMachine | None = None
+    acknowledgement_message_id: int | None = None
 
 
 class SemanticModelClient:
     _CODEX_TASK_STARTED_NOTE = "codex task started"
     _CODEX_TASK_STARTED_ACK = "i'll start on that now"
 
-    def __init__(self, config: SemanticConfig, provider: ModelProvider) -> None:
+    def __init__(
+        self, config: SemanticConfig, provider: ModelProvider,
+        *, acknowledge_work: Callable[[ContextFramePayload], int] | None = None,
+    ) -> None:
         self._config = config
         self._provider = provider
         self._session_state: dict[str, SemanticSessionState] = {}
+        self._acknowledge_work = acknowledge_work
 
     def decide(
         self,
@@ -97,7 +104,14 @@ class SemanticModelClient:
             }
             if tools is not None:
                 request["tools"] = tools
-            decision, response_id = structured_with_metadata(**request)
+            try:
+                decision, response_id = structured_with_metadata(**request)
+            except Exception:
+                # a failed post-dispatch generation cannot undo work that already started
+                if self._started_codex_task(tools) is None:
+                    raise
+                decision = SemanticDecisionSchema(action="ignore", chat_id=frame.chat_id, confidence=1.0)
+                response_id = None
             if response_id:
                 session_state.previous_response_id = response_id
             return self._finalize_work_decision(frame, decision, tools)
@@ -130,10 +144,19 @@ class SemanticModelClient:
         ):
             session_state.codex_workflow_trigger_message_id = frame.trigger_message_id
             session_state.codex_workflow = CodexWorkStateMachine(route)
-        return self._config.tool_registry.new_session(
+            session_state.acknowledgement_message_id = None
+        tools = self._config.tool_registry.new_session(
             runtime=self._config.tool_runtime,
             codex_workflow=session_state.codex_workflow,
         )
+        if self._acknowledge_work is not None and route == CodexWorkRoute.START_TASK and (
+            frame.linear_task_list is None and frame.pending_interruption is None
+        ):
+            def acknowledge() -> None:
+                if session_state.acknowledgement_message_id is None:
+                    session_state.acknowledgement_message_id = self._acknowledge_work(frame)
+            tools.before_codex_dispatch = acknowledge
+        return tools
 
     def _codex_work_route(self, frame: ContextFramePayload) -> CodexWorkRoute:
         # route active questions back to their blocked task without relying on reply metadata
@@ -165,6 +188,7 @@ class SemanticModelClient:
                 "work_intent": "delegate" if work_dispatched else decision.work_intent,
                 "codex_work_dispatched": work_dispatched,
                 "codex_task_started": started_task is not None or recovered_task,
+                "work_acknowledged": False,
                 "codex_work_error_code": failure_code,
                 "codex_work_error": failure_message,
             }
@@ -186,6 +210,19 @@ class SemanticModelClient:
                 "codex_tool_call_id": None,
             }
         )
+        acknowledgement_id = self._session_state[self._session_key(frame)].acknowledgement_message_id
+        if acknowledgement_id is not None:
+            # retain the receipt as a task reply anchor without sending a second acknowledgement
+            runtime = self._config.tool_runtime
+            if runtime is not None and runtime.state_store is not None:
+                runtime.state_store.bind_codex_task_outbound(
+                    app_server_id=decision.codex_app_server_id, task_id=decision.codex_task_id,
+                    chat_id=frame.chat_id, message_ids=[acknowledgement_id], updated_at=utc_now(),
+                )
+            return decision.model_copy(update={
+                "action": "ignore", "reply_text": None, "reply_to_message_id": None,
+                "work_acknowledged": True,
+            })
         return self._acknowledge_started_codex_task(frame, decision)
 
     def _acknowledge_started_codex_task(

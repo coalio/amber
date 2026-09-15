@@ -18,6 +18,7 @@ from src.events.action import (
     SleepStateChangedPayload,
 )
 from src.events.ai import SemanticDecisionMadeEvent
+from src.events.context import ContextFramePayload
 from src.events.bus import EventBus, emitter_context
 from src.events.outbound import OutboundMessagePreparedEvent
 from src.events.receiver import (
@@ -66,6 +67,23 @@ class ActionLayer:
         EventBus.subscribe("SemanticDecisionMadeEvent", self.handle_semantic_decision)
         EventBus.subscribe("PresenceStateChangedEvent", self.handle_presence_state_changed)
         self.refresh_sleep_window()
+
+    def acknowledge_work(self, frame: ContextFramePayload) -> int:
+        # confirm receipt before dispatch; this synchronous barrier is never interruptible
+        reply_to = frame.recommended_reply_candidate or frame.current_message.message_id
+        message = "on it"
+        sent_id = self._transport.send_message(frame.chat_id, message, reply_to)
+        self._archive_outbound_messages(frame.chat_id, [message], reply_to, [sent_id])
+        self._state_store.touch_delivery_state({
+            "last_outbound_message_id": sent_id, "last_outbound_chat_id": frame.chat_id,
+        })
+        self._logger.info("action.work_acknowledged", extra={
+            "event": "action.work_acknowledged", "context": {
+                "chat_id": frame.chat_id, "trigger_message_id": frame.trigger_message_id,
+                "sent_message_id": sent_id, "delivered_at": utc_now().isoformat(),
+            },
+        })
+        return sent_id
 
     def handle_message_read(self, event: MessageReadEvent) -> None:
         with emitter_context("action"):

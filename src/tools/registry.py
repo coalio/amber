@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -96,6 +97,7 @@ class ToolSession:
         self._enabled_tool_names: list[str] = [GET_TOOL_NAME]
         self._executions: list[ToolExecution] = []
         self._codex_workflow = codex_workflow or CodexWorkStateMachine(codex_work_route)
+        self.before_codex_dispatch: Callable[[], None] | None = None
 
     def enable(self, name: str) -> None:
         if self.registry.get(name) is None:

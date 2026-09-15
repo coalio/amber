@@ -138,6 +138,9 @@ def dispatch_codex_task(arguments: dict[str, Any], session: ToolSession) -> dict
     context = tool._normalized_context(raw_context)
     linear_issue_id = str(context.get("linear_issue_id") or "").strip()
     resume_thread_id = tool._resume_thread_id(context, linear_issue_id, session)
+    # the application must deliver its receipt before a worker can begin execution
+    if session.before_codex_dispatch is not None:
+        session.before_codex_dispatch()
     try:
         if resume_thread_id:
             task = adapter.continue_task(

@@ -57,7 +57,9 @@ class ConsciousHarness:
                 },
                 user_reply=user_reply,
             )
-        if frame.response_required and decision.action in {"ignore", "sleep"}:
+        if frame.response_required and decision.action in {"ignore", "sleep"} and not (
+            decision.work_acknowledged and decision.codex_work_dispatched
+        ):
             return HarnessFailure(
                 code="required_response_cannot_be_silent",
                 reason=(

@@ -58,7 +58,7 @@ Integration tests are slower and may require live OpenAI, Telegram, Linear, GitH
 
 ## Commits And Branches
 
-Develop in a worktree on `feature/<slug>`, `fix/<slug>`, or `release/X.Y.Z`; do not work directly on `master`. All changes reach `master` through a pull request.
+Develop on a `feature/<slug>`, `fix/<slug>`, or `release/X.Y.Z` branch in the main repository checkout; do not work directly on `master`. All changes reach `master` through a pull request.
 
 Use scoped Conventional Commits:
 

@@ -1,15 +1,17 @@
-# Amber 0.5.3
+# Amber 0.6.0
 
-## Fixed
+## Added
 
-- Preserve complete credential values when authorized workspace owners provide them for delegated Codex tasks and clarification replies.
-- Keep secret non-disclosure rules scoped to user-facing replies, logs, and durable records so they do not redact internal execution input.
+- Install the `coalio/codex-hooks` review gate by default at a pinned revision in each workspace's persistent Codex home.
+- Configure the hook repository and revision through the workspace `[hooks]` table, including `repository = "none"` disablement.
 
 ## Changed
 
-- Document branch-based development in the main repository checkout without requiring additional worktrees.
+- Trust only exact global hook hashes reported by Codex, without trusting repository-local hooks.
+- Preserve first-install conflict protection and use upstream backup behavior for updates from the same Amber-managed hook repository.
+- Restart older Codex app-server protocol instances so hook installation and trust take effect after an Amber upgrade.
 
 ## Validation
 
-- The 246-test unit suite includes release-policy precedence, exact clarification forwarding, and secret-free logging coverage.
-- Focused regressions verify that stale workspace guidance cannot reintroduce credential handoff redaction.
+- The 256-test unit suite covers hook configuration, installation, disablement, trust scoping, and app-server upgrade detection.
+- The pinned hook package passes its 37-test upstream suite through Amber's generated first-install and managed-update paths.

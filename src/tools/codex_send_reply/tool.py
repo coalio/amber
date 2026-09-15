@@ -219,6 +219,7 @@ class CodexSendReply(BaseTool):
             },
             "cleared_open_question": cleared is not None,
             "recovered": True,
+            "work_acknowledged": bool(recovery.get("work_acknowledged")),
             "app_server_id": recovery.get("app_server_id"),
             "task_id": recovery.get("task_id"),
             "tool_call_id": None,

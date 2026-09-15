@@ -10,6 +10,7 @@
 - Deliver the work receipt before starting the worker. Follow-up messages cannot cancel it, and later model failures cannot conceal a successful task start.
 - Retry token-limited structured responses before parsing or executing their tool calls. The default output budget is now 4096 tokens.
 - Preserve messages waiting for debounce when the idle timeout expires, honor longer configured debounce windows, and retain typing activity received before session creation.
+- Preserve the originating task context on worker notifications and questions, including local gateway routing. Older worker servers are refreshed automatically.
 
 ## Upgrade Notes
 

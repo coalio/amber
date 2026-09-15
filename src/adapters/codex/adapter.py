@@ -502,7 +502,7 @@ class CodexAdapter(BaseAdapter):
             payload.get("ok") is True
             and payload.get("runner") == "codex-cli"
             and payload.get("yolo_mode") is True
-            and payload.get("protocol_version") == 2
+            and payload.get("protocol_version") == 3
         )
 
     def _container_uses_runtime_image(self) -> bool:

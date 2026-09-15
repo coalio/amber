@@ -10,6 +10,9 @@ import pytest
 from src.action.config import ActionConfig
 from src.action.telegram.layer import ActionLayer
 from src.action.telegram.transport import RecordingTransport
+from src.adapters.codex import app_server as codex_app_server
+from src.adapters.codex import CodexNotification
+from src.receiver.codex.receiver import CodexReceiver
 from src.ai.config import AIConfig
 from src.ai.semantic.layer import AILayer
 from src.ai.semantic.schema import SemanticDecisionSchema
@@ -127,3 +130,25 @@ def test_gateway_socket_cannot_replace_running_owner(tmp_path):
             await first.close()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("worker_context", [{}, {"amber_gateway_chat_id": "forged", "detail": "complete"}])
+def test_worker_notifications_preserve_gateway_delivery_route(tmp_path, worker_context):
+    store = GatewayStore(tmp_path / "captures", ["1001001001"])
+    session = store.create("1001001001")
+    runner = codex_app_server.CodexTaskRunner("task_fixture", {"context": {"amber_gateway_chat_id": session}})
+    receiver = CodexReceiver(object(), MemoryStore(tmp_path / "memories"), ["1001001001"], store.candidates)
+    events = []
+    EventBus.subscribe("CodexNotificationReceivedEvent", events.append)
+    codex_app_server.EVENTS.clear()
+    try:
+        runner._append_user_notification(message="inspection complete", notification_kind="completion", context=worker_context)
+        emitted = codex_app_server.EVENTS[-1]
+        receiver._handle_notification(CodexNotification(
+            app_server_id="fixture", task_id="task_fixture", notification_id="notification_fixture",
+            notification_kind="completion", message=emitted["message"], task_description="inspect",
+            context=emitted["context"],
+        ))
+        assert events[0].payload.candidate_people[0].chat_id == session
+    finally:
+        codex_app_server.EVENTS.clear()

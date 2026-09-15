@@ -30,6 +30,7 @@ class ToolRuntime:
     state_store: GlobalStateStore | None = None
     telegram_transport: Any | None = None
     codex_workspace: Path | None = None
+    source_chat_id: int | str | None = None
 
 
 @dataclass(frozen=True)

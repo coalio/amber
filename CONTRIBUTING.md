@@ -56,6 +56,26 @@ pytest tests/unit -q
 
 Integration tests are slower and may require live OpenAI, Telegram, Linear, GitHub, Codex, and Podman access. Prefer the smallest focused test that covers the change.
 
+## Gateway Regression Testing
+
+The running workspace exposes a local owner-only Unix socket. Send messages as an administrator from `attention.always_surface_telegram_ids`:
+
+```bash
+amber gateway send --workspace my-workspace --as=1001001001 \
+  --message "Please inspect the example repository" \
+  --message "Include the review comments" --interval 0.2 --wait task --timeout 600
+```
+
+This enters the same receiver, attention, debounce, context, model, and task pipeline as Telegram. Replies and file-delivery metadata are captured locally in a separate `gateway:` conversation, with independent message ids. Model calls and delegated tasks are real and can change repositories or external systems according to the supplied request. Use explicitly read-only tasks for diagnostics.
+
+The command prints JSON lines with receipt, frame, reply, and completion timestamps. `--wait reply` (default) waits for the turn to settle; `--wait none` returns after acceptance. A timeout exits with status 2 and does not cancel work. Use `--typing-seconds 8` with multiple messages to verify that typing extends the batching window. Continue a conversation with `--session gateway:...` and optionally `--reply-to <captured-message-id>`.
+
+```bash
+amber gateway events --workspace my-workspace --session gateway:... --follow --timeout 600
+```
+
+Captures persist under the configured runtime-state directory's `gateway/` folder across restarts. Gateway sends require the workspace service to be running. Set `[context].debounce_seconds` to the intended quiet interval (default 5 seconds); zero disables message batching. Idle expiry does not discard a pending batch. `[ai].max_output_tokens` defaults to 4096; incomplete generations caused by that limit get at most two retries with a doubled budget before any new tool calls execute.
+
 ## Commits And Branches
 
 Develop on a `feature/<slug>`, `fix/<slug>`, or `release/X.Y.Z` branch in the main repository checkout; do not work directly on `master`. All changes reach `master` through a pull request.

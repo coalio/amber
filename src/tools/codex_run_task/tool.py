@@ -136,6 +136,10 @@ def dispatch_codex_task(arguments: dict[str, Any], session: ToolSession) -> dict
     # resolve whether this is a new turn or a continuation before changing external state
     tool = CodexRunTask()
     context = tool._normalized_context(raw_context)
+    # gateway routing is trusted ingress metadata, never a model-selected recipient
+    context.pop("amber_gateway_chat_id", None)
+    if str(session.runtime.source_chat_id).startswith("gateway:"):
+        context["amber_gateway_chat_id"] = session.runtime.source_chat_id
     linear_issue_id = str(context.get("linear_issue_id") or "").strip()
     resume_thread_id = tool._resume_thread_id(context, linear_issue_id, session)
     # the application must deliver its receipt before a worker can begin execution

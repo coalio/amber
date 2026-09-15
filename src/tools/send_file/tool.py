@@ -43,6 +43,9 @@ class SendFile(BaseTool):
             return {"sent": False, "error": "Codex workspace is not configured."}
 
         chat_id = self._chat_id(arguments.get("chat_id"))
+        # gateway conversations capture all delivery locally, including file tools
+        if str(session.runtime.source_chat_id).startswith("gateway:"):
+            chat_id = session.runtime.source_chat_id
         if chat_id is None:
             return {"sent": False, "error": "chat_id is required."}
 

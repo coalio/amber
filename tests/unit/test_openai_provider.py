@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from src.ai.semantic.schema import SemanticDecisionSchema
 from src.providers.openai.provider import OpenAIProvider
 from src.tools.registry import default_tool_registry
@@ -158,6 +160,48 @@ def _assert_strict_tool_definitions(tools: list[dict]) -> None:
     for tool in tools:
         assert tool["strict"] is True
         _assert_strict_schema(tool["parameters"])
+
+
+def test_truncated_generation_retries_before_executing_tools(monkeypatch) -> None:
+    fake_client = ToolCallingOpenAIClient()
+    complete = fake_client.responses._responses[0]
+    fake_client.responses._responses.insert(0, SimpleNamespace(
+        id="incomplete", status="incomplete",
+        incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+        output_text='{"action":', output=complete.output,
+    ))
+    monkeypatch.setattr("src.providers.openai.provider.OpenAI", lambda api_key: fake_client)
+    tools = default_tool_registry().new_session()
+    result = OpenAIProvider("test-key").generate_structured_with_metadata(
+        model="gpt-5.4", instructions="Return a decision.", input_items=[],
+        schema=SemanticDecisionSchema, max_output_tokens=1200, temperature=0.3,
+        tools=tools,
+    )
+    assert result[0].action == "ignore"
+    assert [item.name for item in tools.executions] == ["GetTool", "CodexRunTask"]
+    calls = fake_client.responses.calls
+    assert calls[1]["max_output_tokens"] == 2400
+    assert calls[1]["input"] == calls[0]["input"]
+    assert "previous_response_id" not in calls[1]
+
+
+@pytest.mark.parametrize("reason,expected_calls", [("max_output_tokens", 3), ("content_filter", 1)])
+def test_incomplete_responses_fail_with_bounded_retries(monkeypatch, reason, expected_calls) -> None:
+    fake_client = FakeOpenAIClient()
+    calls = []
+
+    def incomplete(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(status="incomplete", incomplete_details={"reason": reason}, output_text="{")
+
+    fake_client.responses.create = incomplete
+    monkeypatch.setattr("src.providers.openai.provider.OpenAI", lambda api_key: fake_client)
+    with pytest.raises(RuntimeError, match=reason):
+        OpenAIProvider("test-key").generate_structured(
+            model="gpt-5.4", instructions="Return a decision.", input_items=[],
+            schema=SemanticDecisionSchema, max_output_tokens=1200, temperature=0.3,
+        )
+    assert len(calls) == expected_calls
 
 
 def _assert_strict_schema(schema: dict) -> None:

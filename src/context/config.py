@@ -37,7 +37,7 @@ class ContextConfig:
             else settings.context_idle_timeout_max_seconds
         )
         return cls(
-            debounce_seconds=max(min(settings.context_debounce_seconds, 5.0), 0.0),
+            debounce_seconds=max(settings.context_debounce_seconds, 0.0),
             idle_timeout_seconds=idle_timeout_seconds,
             competing_chat_timeout_seconds=settings.context_competing_chat_timeout_seconds,
             recent_message_budget=settings.context_recent_message_budget,

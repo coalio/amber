@@ -24,8 +24,11 @@ from src.context.pipeline import ContextLayer
 from src.events.bus import EventBus
 from src.gateway.cli import request_gateway
 from src.gateway.server import GatewayServer
-from src.gateway.store import GatewayStore
-from src.gateway.transport import GatewayTransport
+from src.state.gateway import GatewayStore
+from src.gateway.observer import GatewayObserver
+from src.receiver.gateway import GatewayReceiver
+from src.events.delivery import TaskOrigin
+from src.action.gateway import GatewayTransport
 from src.outbound.config import OutboundPreparationConfig
 from src.outbound.layer import OutboundPreparationLayer
 from src.receiver.telegram.receiver import TelegramReceiver
@@ -46,9 +49,9 @@ def reset_runtime():
 
 
 def test_gateway_runs_burst_and_typing_through_real_pipeline(tmp_path):
-    store = GatewayStore(tmp_path / "captures", ["1001001001"], {"1001001001": "Fixture Admin"})
+    store = GatewayStore(tmp_path / "captures")
     delegate = RecordingTransport()
-    transport = GatewayTransport(delegate, store)
+    transport = GatewayTransport(delegate, store, ["1001001001"])
     archive = MessageArchive.instance()
     state = GlobalStateStore(tmp_path / "state.json", "UTC")
     scheduler = RuntimeScheduler.instance()
@@ -63,7 +66,7 @@ def test_gateway_runs_burst_and_typing_through_real_pipeline(tmp_path):
         recent_message_budget=8, max_compacted_facts=6, disable_sleep_state=True,
         initial_engagement_delay_min_seconds=0, initial_engagement_delay_max_seconds=0,
     ), state, scheduler, archive, memory, "UTC")
-    store.register(SimpleNamespace(subscribe_task_completed=lambda callback: None))
+    GatewayObserver(store).register(SimpleNamespace(subscribe_task_completed=lambda callback: None))
     frames = []
     done = threading.Event()
 
@@ -78,7 +81,9 @@ def test_gateway_runs_burst_and_typing_through_real_pipeline(tmp_path):
         enable_real_delays=False, disable_sleep_state=True, transport_max_retries=1, transport_retry_delay_seconds=0,
     ), transport, state, scheduler, archive, "UTC")
     EventBus.subscribe("OutboundMessageSentEvent", lambda event: done.set())
-    server = GatewayServer(tmp_path / "gateway.sock", receiver, store)
+    ingress = GatewayReceiver(receiver, store, ["1001001001"], lookup_reply=archive.get,
+                              sender_names={"1001001001": "Fixture Admin"})
+    server = GatewayServer(tmp_path / "gateway.sock", ingress, store)
 
     async def scenario():
         await server.start()
@@ -103,24 +108,27 @@ def test_gateway_runs_burst_and_typing_through_real_pipeline(tmp_path):
 
 
 def test_gateway_enforces_admin_and_session_ownership(tmp_path):
-    store = GatewayStore(tmp_path / "captures", ["1001001001", "1001001002"])
+    store = GatewayStore(tmp_path / "captures")
     session = store.create("1001001001")
-    server = GatewayServer(tmp_path / "gateway.sock", object(), store)
+    ingress = GatewayReceiver(object(), store, ["1001001001", "1001001002"], lookup_reply=lambda *args: None)
+    server = GatewayServer(tmp_path / "gateway.sock", ingress, store)
     for sender in ("999", "1001001002"):
         with pytest.raises(RuntimeError):
             asyncio.run(server._request({"action": "send", "sender": sender, "session": session, "messages": ["hello"]}))
     with pytest.raises(RuntimeError, match="Invalid gateway session"):
         store.read("../private")
-    assert store.candidates({"amber_gateway_chat_id": session})[0]["chat_id"] == session
-    assert store.candidates({}) is None
+    delivery = GatewayTransport(RecordingTransport(), store, ["1001001001"])
+    assert delivery.candidates(TaskOrigin(delivery_route=session))[0]["chat_id"] == session
+    assert delivery.origin_for_chat(1001001001) is None
 
 
 def test_gateway_socket_cannot_replace_running_owner(tmp_path):
-    store = GatewayStore(tmp_path / "captures", ["1001001001"])
+    store = GatewayStore(tmp_path / "captures")
 
     async def scenario():
-        first = GatewayServer(tmp_path / "gateway.sock", object(), store)
-        second = GatewayServer(tmp_path / "gateway.sock", object(), store)
+        ingress = GatewayReceiver(object(), store, ["1001001001"], lookup_reply=lambda *args: None)
+        first = GatewayServer(tmp_path / "gateway.sock", ingress, store)
+        second = GatewayServer(tmp_path / "gateway.sock", ingress, store)
         await first.start()
         try:
             with pytest.raises(RuntimeError, match="Another runtime"):
@@ -132,12 +140,13 @@ def test_gateway_socket_cannot_replace_running_owner(tmp_path):
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("worker_context", [{}, {"amber_gateway_chat_id": "forged", "detail": "complete"}])
+@pytest.mark.parametrize("worker_context", [{}, {"origin": "forged", "detail": "complete"}])
 def test_worker_notifications_preserve_gateway_delivery_route(tmp_path, worker_context):
-    store = GatewayStore(tmp_path / "captures", ["1001001001"])
+    store = GatewayStore(tmp_path / "captures")
     session = store.create("1001001001")
-    runner = codex_app_server.CodexTaskRunner("task_fixture", {"context": {"amber_gateway_chat_id": session}})
-    receiver = CodexReceiver(object(), MemoryStore(tmp_path / "memories"), ["1001001001"], store.candidates)
+    runner = codex_app_server.CodexTaskRunner("task_fixture", {"origin": session, "context": {"project": "fixture"}})
+    delivery = GatewayTransport(RecordingTransport(), store, ["1001001001"])
+    receiver = CodexReceiver(object(), MemoryStore(tmp_path / "memories"), ["1001001001"], delivery.candidates)
     events = []
     EventBus.subscribe("CodexNotificationReceivedEvent", events.append)
     codex_app_server.EVENTS.clear()
@@ -147,7 +156,7 @@ def test_worker_notifications_preserve_gateway_delivery_route(tmp_path, worker_c
         receiver._handle_notification(CodexNotification(
             app_server_id="fixture", task_id="task_fixture", notification_id="notification_fixture",
             notification_kind="completion", message=emitted["message"], task_description="inspect",
-            context=emitted["context"],
+            context=emitted["context"], origin=TaskOrigin(delivery_route=emitted["origin"]),
         ))
         assert events[0].payload.candidate_people[0].chat_id == session
     finally:

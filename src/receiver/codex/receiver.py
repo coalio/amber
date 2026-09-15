@@ -12,6 +12,8 @@ from src.events.codex import (
     CodexQuestionReceivedEvent,
 )
 from src.utils.time import utc_now
+from src.events.delivery import TaskOrigin
+from src.utils.logging import get_logger
 
 
 class CodexReceiver:
@@ -20,7 +22,7 @@ class CodexReceiver:
         adapter: CodexAdapter,
         memory_store: MemoryStore,
         allowlisted_sender_ids: Iterable[str],
-        candidate_resolver: Callable[[dict], list[dict] | None] | None = None,
+        candidate_resolver: Callable[[TaskOrigin], list[dict]] | None = None,
     ) -> None:
         self._adapter = adapter
         self._memory_store = memory_store
@@ -44,7 +46,10 @@ class CodexReceiver:
             self._notification_subscription_id = None
 
     def _handle_question(self, question: CodexQuestion) -> None:
-        candidates = self._candidates(question.context)
+        candidates = self._candidates(question.origin)
+        if question.origin is not None and not candidates:
+            self._unavailable_route(question.task_id)
+            return
         with emitter_context("receiver.codex"):
             EventBus.emit(
                 CodexQuestionReceivedEvent(
@@ -56,6 +61,7 @@ class CodexReceiver:
                         questions=list(question.questions),
                         task_description=question.task_description,
                         context=dict(question.context),
+                        origin=question.origin,
                         candidate_people=candidates,
                         created_at=utc_now(),
                     ),
@@ -63,7 +69,10 @@ class CodexReceiver:
             )
 
     def _handle_notification(self, notification: CodexNotification) -> None:
-        candidates = self._candidates(notification.context)
+        candidates = self._candidates(notification.origin)
+        if notification.origin is not None and not candidates:
+            self._unavailable_route(notification.task_id)
+            return
         with emitter_context("receiver.codex"):
             EventBus.emit(
                 CodexNotificationReceivedEvent(
@@ -76,6 +85,7 @@ class CodexReceiver:
                         message=notification.message,
                         task_description=notification.task_description,
                         context=dict(notification.context),
+                        origin=notification.origin,
                         candidate_people=candidates,
                         created_at=utc_now(),
                     ),
@@ -88,9 +98,14 @@ class CodexReceiver:
             for candidate in self._memory_store.list_allowlisted_profiles(self._allowlisted_sender_ids)
         ]
 
-    def _candidates(self, context: dict) -> list[dict]:
-        if self._candidate_resolver is not None:
-            candidates = self._candidate_resolver(context)
-            if candidates is not None:
-                return candidates
+    def _candidates(self, origin: TaskOrigin | None) -> list[dict]:
+        # a constrained origin fails closed instead of falling back to real recipients
+        if origin is not None:
+            return self._candidate_resolver(origin) if self._candidate_resolver is not None else []
         return self._allowlisted_candidates()
+
+    def _unavailable_route(self, task_id: str) -> None:
+        get_logger("amber.receiver.codex").warning(
+            "codex.delivery_route_unavailable",
+            extra={"event": "codex.delivery_route_unavailable", "context": {"task_id": task_id}},
+        )

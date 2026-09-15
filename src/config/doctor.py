@@ -679,7 +679,7 @@ def _app_server_health_ok(app_server_url: str) -> bool:
         and payload.get("ok") is True
         and payload.get("runner") == "codex-cli"
         and payload.get("yolo_mode") is True
-        and payload.get("protocol_version") == 3
+        and payload.get("protocol_version") == 4
     )
 
 

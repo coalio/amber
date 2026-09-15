@@ -1,5 +1,7 @@
 # State
 
+`gateway.py` persists private operator capture sessions as JSONL. Authentication belongs to the gateway receiver; event subscription and observation belong to the gateway protocol package.
+
 State contains durable runtime data that must survive process restarts.
 
 ## Core Pieces

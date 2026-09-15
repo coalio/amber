@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, urlparse
 
 
 APP_SERVER_ID = "codex-sandbox"
-PROTOCOL_VERSION = 3
+PROTOCOL_VERSION = 4
 SERVER_INSTANCE_ID = f"server_{uuid.uuid4().hex}"
 YOLO_MODE = True
 TASKS: dict[str, dict[str, Any]] = {}
@@ -406,6 +406,8 @@ class CodexTaskRunner:
     def __init__(self, task_id: str, payload: dict[str, Any]) -> None:
         self.task_id = task_id
         self.payload = payload
+        # snapshot opaque provenance independently of mutable worker context
+        self._origin = payload.get("origin")
         self.client: JsonRpcClient | None = None
         self.pending_tool_calls: dict[str, PendingToolCall] = {}
         self.thread_id: str | None = None
@@ -437,7 +439,7 @@ class CodexTaskRunner:
                 task["pending_tool_calls"] = [
                     item for item in task.get("pending_tool_calls", []) if item != tool_call_id
                 ]
-            _append_event(
+            self._append_event(
                 {
                     "type": "CodexToolOutputReceived",
                     "app_server_id": APP_SERVER_ID,
@@ -741,7 +743,7 @@ class CodexTaskRunner:
             with LOCK:
                 TASKS[self.task_id]["status"] = status
                 self._append_terminal_notification_if_needed(status=status, reason="turn_completed")
-                _append_event(
+                self._append_event(
                     {
                         "type": "CodexTaskCompleted",
                         "app_server_id": APP_SERVER_ID,
@@ -883,7 +885,7 @@ class CodexTaskRunner:
             if task is not None:
                 task["status"] = "waiting_for_clarification"
                 task.setdefault("pending_tool_calls", []).append(tool_call_id)
-            _append_event(
+            self._append_event(
                 {
                     "type": "AmberAskUserQuestion",
                     "app_server_id": APP_SERVER_ID,
@@ -953,7 +955,7 @@ class CodexTaskRunner:
             task = TASKS.get(self.task_id)
             if task is not None:
                 task.setdefault("notifications", []).append(notification)
-            _append_event(
+            self._append_event(
                 {
                     "type": "AmberNotifyUser",
                     "app_server_id": APP_SERVER_ID,
@@ -969,14 +971,13 @@ class CodexTaskRunner:
             )
         return notification
 
+    def _append_event(self, event: dict[str, Any]) -> None:
+        # only the runner's immutable origin may enter the pollable event envelope
+        _append_event({**event, "origin": self._origin})
+
     def _event_context(self, context: dict[str, Any]) -> dict[str, Any]:
-        # worker-authored details cannot discard or redirect the trusted task origin
-        task_context = self.payload.get("context") or {}
-        merged = {**task_context, **context}
-        merged.pop("amber_gateway_chat_id", None)
-        if "amber_gateway_chat_id" in task_context:
-            merged["amber_gateway_chat_id"] = task_context["amber_gateway_chat_id"]
-        return merged
+        # retain task metadata without mixing it with trusted delivery provenance
+        return {**(self.payload.get("context") or {}), **context}
 
     def _report_pull_request(self, request_id: int, arguments: dict[str, Any]) -> None:
         event_type = str(arguments.get("event_type") or "").strip()
@@ -1004,7 +1005,7 @@ class CodexTaskRunner:
                 task["pr_branch"] = branch
                 task["pr_title"] = title
                 task["pr_summary"] = summary
-            _append_event(
+            self._append_event(
                 {
                     "type": "AmberReportPullRequest",
                     "app_server_id": APP_SERVER_ID,
@@ -1052,7 +1053,7 @@ class CodexTaskRunner:
                 task["exit_code"] = code
                 self._append_terminal_notification_if_needed(status=status, reason="process_exit", exit_code=code)
                 if status == "completed":
-                    _append_event(
+                    self._append_event(
                         {
                             "type": "CodexTaskCompleted",
                             "app_server_id": APP_SERVER_ID,
@@ -1160,6 +1161,7 @@ class Handler(BaseHTTPRequestHandler):
             "task_id": task_id,
             "task_description": str(payload.get("task_description") or ""),
             "context": payload.get("context") if isinstance(payload.get("context"), dict) else {},
+            "origin": payload.get("origin"),
             "status": "queued",
             "tool_outputs": [],
             "notifications": [],

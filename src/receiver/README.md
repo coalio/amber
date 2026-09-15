@@ -7,6 +7,7 @@ Receivers convert external activity into Amber events. They should normalize inp
 - `telegram/`: receives Telegram messages and typing/activity updates through Telethon.
 - `codex/`: receives Codex questions and notifications from the local Codex app-server.
 - `linear/`: polls Linear for due work and emits queue events.
+- `gateway.py`: authorizes operator test bursts and normalizes them through the public `chat.py` ingress interface, with injected reply lookup and typing delivery.
 
 ## Event Boundaries
 

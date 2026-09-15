@@ -6,6 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.events.base import BaseEvent
+from src.events.delivery import TaskOrigin
 
 
 CodexNotificationKind = Literal["milestone", "completion", "blocked", "failed"]
@@ -31,6 +32,7 @@ class CodexQuestionPayload(BaseModel):
     questions: list[str]
     task_description: str
     context: dict[str, Any] = Field(default_factory=dict)
+    origin: TaskOrigin | None = None
     candidate_people: list[CodexCandidatePersonPayload] = Field(default_factory=list)
     created_at: datetime
 
@@ -50,6 +52,7 @@ class CodexNotificationPayload(BaseModel):
     message: str
     task_description: str
     context: dict[str, Any] = Field(default_factory=dict)
+    origin: TaskOrigin | None = None
     candidate_people: list[CodexCandidatePersonPayload] = Field(default_factory=list)
     created_at: datetime
 

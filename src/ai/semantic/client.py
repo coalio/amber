@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
@@ -12,9 +11,9 @@ from src.ai.semantic.schema import (
 )
 from src.events.context import ContextFrameMessagePayload, ContextFramePayload, PendingInterruptionPayload
 from src.providers.base import ModelProvider
+from src.events.delivery import ToolInvocation
 from src.tools.codex_workflow import CodexWorkRoute, CodexWorkStateMachine
 from src.tools.registry import ToolSession
-from src.utils.time import utc_now
 
 
 class SemanticClient(Protocol):
@@ -46,7 +45,6 @@ class SemanticSessionState:
     previous_response_id: str | None = None
     codex_workflow_trigger_message_id: int | None = None
     codex_workflow: CodexWorkStateMachine | None = None
-    acknowledgement_message_id: int | None = None
 
 
 class SemanticModelClient:
@@ -55,12 +53,10 @@ class SemanticModelClient:
 
     def __init__(
         self, config: SemanticConfig, provider: ModelProvider,
-        *, acknowledge_work: Callable[[ContextFramePayload], int] | None = None,
     ) -> None:
         self._config = config
         self._provider = provider
         self._session_state: dict[str, SemanticSessionState] = {}
-        self._acknowledge_work = acknowledge_work
 
     def decide(
         self,
@@ -144,24 +140,16 @@ class SemanticModelClient:
         ):
             session_state.codex_workflow_trigger_message_id = frame.trigger_message_id
             session_state.codex_workflow = CodexWorkStateMachine(route)
-            session_state.acknowledgement_message_id = None
-        source_chat_id = frame.chat_id
-        for source in (frame.codex_notification, frame.open_question):
-            if source is not None and source.context.get("amber_gateway_chat_id"):
-                source_chat_id = source.context["amber_gateway_chat_id"]
-        tools = self._config.tool_registry.new_session(
-            runtime=(replace(self._config.tool_runtime, source_chat_id=source_chat_id)
+        invocation = ToolInvocation(
+            chat_id=frame.chat_id, trigger_message_id=frame.trigger_message_id,
+            reply_to_message_id=frame.recommended_reply_candidate or frame.current_message.message_id,
+            source=frame.current_message.source, task_origin=frame.task_origin,
+        )
+        return self._config.tool_registry.new_session(
+            runtime=(replace(self._config.tool_runtime, invocation=invocation)
                      if self._config.tool_runtime is not None else None),
             codex_workflow=session_state.codex_workflow,
         )
-        if self._acknowledge_work is not None and route == CodexWorkRoute.START_TASK and (
-            frame.linear_task_list is None
-        ):
-            def acknowledge() -> None:
-                if session_state.acknowledgement_message_id is None:
-                    session_state.acknowledgement_message_id = self._acknowledge_work(frame)
-            tools.before_codex_dispatch = acknowledge
-        return tools
 
     def _codex_work_route(self, frame: ContextFramePayload) -> CodexWorkRoute:
         # route active questions back to their blocked task without relying on reply metadata
@@ -215,15 +203,8 @@ class SemanticModelClient:
                 "codex_tool_call_id": None,
             }
         )
-        acknowledgement_id = self._session_state[self._session_key(frame)].acknowledgement_message_id
-        if acknowledgement_id is not None:
-            # retain the receipt as a task reply anchor without sending a second acknowledgement
-            runtime = self._config.tool_runtime
-            if runtime is not None and runtime.state_store is not None:
-                runtime.state_store.bind_codex_task_outbound(
-                    app_server_id=decision.codex_app_server_id, task_id=decision.codex_task_id,
-                    chat_id=frame.chat_id, message_ids=[acknowledgement_id], updated_at=utc_now(),
-                )
+        if started_task.get("work_acknowledged"):
+            # the workflow result is authoritative; model output cannot repeat its receipt
             return decision.model_copy(update={
                 "action": "ignore", "reply_text": None, "reply_to_message_id": None,
                 "work_acknowledged": True,

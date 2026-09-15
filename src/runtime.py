@@ -4,7 +4,7 @@ import asyncio
 import importlib
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from telethon import TelegramClient
 
@@ -40,8 +40,12 @@ from src.utils.logging import configure_logging
 from src.utils.message_archive import MessageArchive
 from src.utils.scheduler import RuntimeScheduler
 from src.gateway.server import GatewayServer
-from src.gateway.store import GatewayStore
-from src.gateway.transport import GatewayTransport
+from src.state.gateway import GatewayStore
+from src.action.gateway import GatewayTransport
+from src.action.delivery import DeliveryPolicy
+from src.gateway.observer import GatewayObserver
+from src.receiver.gateway import GatewayReceiver
+from src.workflows.task_dispatch import TaskDispatchWorkflow
 
 
 @dataclass
@@ -115,15 +119,7 @@ def build_application(
         status_names=settings.linear_issue_status_targets,
     )
     adapter_registry.register(linear_adapter)
-    gateway_store = GatewayStore(
-        settings.runtime_state_path.parent / "gateway", settings.always_surface_telegram_ids,
-        {profile.sender_id: profile.display_name
-         for profile in memory_store.list_allowlisted_profiles(settings.always_surface_telegram_ids)},
-    )
-    codex_receiver = CodexReceiver(
-        codex_adapter, memory_store, settings.always_surface_telegram_ids,
-        candidate_resolver=gateway_store.candidates,
-    )
+    gateway_store = GatewayStore(settings.runtime_state_path.parent / "gateway")
     codex_task_lifecycle_handler = CodexTaskLifecycleHandler(
         codex_adapter,
         adapter_registry=adapter_registry,
@@ -154,10 +150,16 @@ def build_application(
             # bind telegram transport to the loop that will drive the runtime
             loop = asyncio.get_running_loop()
             telegram_client = TelegramClient(str(telegram_config.session_path), int(telegram_config.api_id), telegram_config.api_hash, loop=loop)
-            transport = GatewayTransport(TelegramTransport(telegram_client, loop), gateway_store)
-            receiver = TelegramReceiver(telegram_client, message_archive, state_store, transport)
+            transport = TelegramTransport(telegram_client, loop)
         else:
             transport = RecordingTransport()
+    transport = GatewayTransport(transport, gateway_store, settings.always_surface_telegram_ids)
+    delivery_policy = DeliveryPolicy(transport.origin_for_chat, transport.candidates)
+    codex_receiver = CodexReceiver(
+        codex_adapter, memory_store, settings.always_surface_telegram_ids, candidate_resolver=transport.candidates,
+    )
+    if telegram_client is not None:
+        receiver = TelegramReceiver(telegram_client, message_archive, state_store, transport)
     semantic_config = SemanticConfig.from_settings(
         settings,
         memory_store=memory_store,
@@ -185,13 +187,27 @@ def build_application(
         message_archive,
         settings.timezone_name,
     )
+    # application workflow owns the receipt-before-dispatch barrier and trusted origin
+    if semantic_config.tool_runtime is not None:
+        semantic_config = replace(semantic_config, tool_runtime=replace(
+            semantic_config.tool_runtime,
+            task_dispatcher=TaskDispatchWorkflow(
+                adapter_registry, state_store, deliver_receipt=action_layer.deliver_work_receipt,
+                resolve_origin=delivery_policy.origin_for,
+            ),
+            delivery_policy=delivery_policy,
+        ))
     semantic_client = semantic_client or SemanticModelClient(
         semantic_config, ModelProviderGateway(semantic_config).provider,
-        acknowledge_work=action_layer.acknowledge_work,
     )
-    gateway_store.register(codex_adapter)
+    GatewayObserver(gateway_store).register(codex_adapter)
     ai_layer = AILayer(AIConfig.from_settings(settings), semantic_client)
-    gateway = GatewayServer(settings.runtime_state_path.parent / "gateway.sock", receiver, gateway_store) if receiver else None
+    gateway_receiver = GatewayReceiver(
+        receiver, gateway_store, settings.always_surface_telegram_ids, lookup_reply=message_archive.get,
+        sender_names={profile.sender_id: profile.display_name
+                      for profile in memory_store.list_allowlisted_profiles(settings.always_surface_telegram_ids)},
+    ) if receiver else None
+    gateway = GatewayServer(settings.runtime_state_path.parent / "gateway.sock", gateway_receiver, gateway_store) if gateway_receiver else None
     return AmberApplication(
         settings=settings,
         state_store=state_store,

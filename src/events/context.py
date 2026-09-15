@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from src.events.attention import AttentionClassificationPayload, MemoryCardPayload
 from src.events.base import BaseEvent
+from src.events.delivery import TaskOrigin
 from src.events.codex import CodexCandidatePersonPayload, CodexNotificationKind
 from src.events.linear import LinearTaskPayload
 
@@ -125,6 +126,7 @@ class ContextFramePayload(BaseModel):
     codex_notification: CodexNotificationFramePayload | None = None
     codex_followup: CodexFollowupFramePayload | None = None
     linear_task_list: LinearTaskListFramePayload | None = None
+    task_origin: TaskOrigin | None = None
     frame_created_at: datetime | None = None
     visible_read_not_before: datetime | None = None
     visible_surfaced_message_ids: list[int] = Field(default_factory=list)

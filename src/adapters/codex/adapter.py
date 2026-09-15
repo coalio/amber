@@ -15,6 +15,7 @@ from typing import Any, Literal, cast
 from urllib import error, parse, request
 
 from src.adapters.base import BaseAdapter
+from src.events.delivery import TaskOrigin
 from src.config.codex_skills import (
     CODEX_DEVELOPMENT_SKILL,
     CODEX_PR_REVIEWS_SKILL,
@@ -38,6 +39,7 @@ class CodexQuestion:
     questions: list[str]
     task_description: str
     context: dict[str, Any] = field(default_factory=dict)
+    origin: TaskOrigin | None = None
 
 
 @dataclass(frozen=True)
@@ -49,6 +51,7 @@ class CodexNotification:
     message: str
     task_description: str
     context: dict[str, Any] = field(default_factory=dict)
+    origin: TaskOrigin | None = None
 
 
 @dataclass(frozen=True)
@@ -58,6 +61,7 @@ class CodexTaskCompleted:
     status: str
     task_description: str
     context: dict[str, Any] = field(default_factory=dict)
+    origin: TaskOrigin | None = None
     thread_id: str | None = None
     turn_id: str | None = None
 
@@ -75,6 +79,7 @@ class CodexPullRequestEvent:
     summary: str | None = None
     task_description: str = ""
     context: dict[str, Any] = field(default_factory=dict)
+    origin: TaskOrigin | None = None
 
 
 @dataclass(frozen=True)
@@ -214,8 +219,10 @@ class CodexAdapter(BaseAdapter):
         self._pull_request_handlers[subscription_id] = handler
         return subscription_id
 
-    def start_task(self, *, task_description: str, context: dict[str, Any] | None = None) -> CodexTask:
-        return self._start_or_continue_task(task_description=task_description, context=context)
+    def start_task(
+        self, *, task_description: str, context: dict[str, Any] | None = None, origin: TaskOrigin | None = None,
+    ) -> CodexTask:
+        return self._start_or_continue_task(task_description=task_description, context=context, origin=origin)
 
     def continue_task(
         self,
@@ -223,10 +230,12 @@ class CodexAdapter(BaseAdapter):
         thread_id: str,
         task_description: str,
         context: dict[str, Any] | None = None,
+        origin: TaskOrigin | None = None,
     ) -> CodexTask:
         return self._start_or_continue_task(
             task_description=task_description,
             context=context,
+            origin=origin,
             thread_id=thread_id,
         )
 
@@ -235,6 +244,7 @@ class CodexAdapter(BaseAdapter):
         *,
         task_description: str,
         context: dict[str, Any] | None = None,
+        origin: TaskOrigin | None = None,
         thread_id: str | None = None,
     ) -> CodexTask:
         self._logger.info(
@@ -253,6 +263,7 @@ class CodexAdapter(BaseAdapter):
         payload = {
             "task_description": task_description,
             "context": raw_context,
+            "origin": origin.delivery_route if origin is not None else None,
             "thread_id": thread_id,
             "release_version": self._release_version,
             "system_prompt": self._system_prompt(),
@@ -502,7 +513,7 @@ class CodexAdapter(BaseAdapter):
             payload.get("ok") is True
             and payload.get("runner") == "codex-cli"
             and payload.get("yolo_mode") is True
-            and payload.get("protocol_version") == 3
+            and payload.get("protocol_version") == 4
         )
 
     def _container_uses_runtime_image(self) -> bool:
@@ -804,6 +815,7 @@ class CodexAdapter(BaseAdapter):
                                 questions=[str(question) for question in item.get("questions", [])],
                                 task_description=str(item.get("task_description") or ""),
                                 context=dict(item.get("context") or {}),
+                                origin=TaskOrigin(delivery_route=item["origin"]) if item.get("origin") is not None else None,
                             )
                         )
                     elif item.get("type") == "AmberNotifyUser":
@@ -816,6 +828,7 @@ class CodexAdapter(BaseAdapter):
                                 message=str(item.get("message") or ""),
                                 task_description=str(item.get("task_description") or ""),
                                 context=dict(item.get("context") or {}),
+                                origin=TaskOrigin(delivery_route=item["origin"]) if item.get("origin") is not None else None,
                             )
                         )
                     elif item.get("type") == "CodexTaskCompleted":
@@ -826,6 +839,7 @@ class CodexAdapter(BaseAdapter):
                                 status=str(item.get("status") or ""),
                                 task_description=str(item.get("task_description") or ""),
                                 context=dict(item.get("context") or {}),
+                                origin=TaskOrigin(delivery_route=item["origin"]) if item.get("origin") is not None else None,
                                 thread_id=_optional_response_str(item.get("thread_id")),
                                 turn_id=_optional_response_str(item.get("turn_id")),
                             )
@@ -844,6 +858,7 @@ class CodexAdapter(BaseAdapter):
                                 summary=_optional_response_str(item.get("summary")),
                                 task_description=str(item.get("task_description") or ""),
                                 context=dict(item.get("context") or {}),
+                                origin=TaskOrigin(delivery_route=item["origin"]) if item.get("origin") is not None else None,
                             )
                         )
             except (OSError, ValueError, TypeError):

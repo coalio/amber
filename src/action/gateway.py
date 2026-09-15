@@ -2,13 +2,33 @@ from __future__ import annotations
 
 import time
 
-from src.gateway.store import GatewayStore
+from src.events.delivery import TaskOrigin
+from src.state.gateway import GatewayStore, SESSION_RE
 
 
 class GatewayTransport:
-    def __init__(self, delegate, store: GatewayStore) -> None:
+    def __init__(self, delegate, store: GatewayStore, allowlisted_sender_ids=()) -> None:
         self._delegate = delegate
         self._store = store
+        self._allowlisted = {str(item).removeprefix("user") for item in allowlisted_sender_ids}
+
+    def origin_for_chat(self, chat_id) -> TaskOrigin | None:
+        if self._is_gateway(chat_id):
+            return TaskOrigin(delivery_route=str(chat_id))
+        return None
+
+    def candidates(self, origin: TaskOrigin) -> list[dict]:
+        # resolve only a known, authorized capture; never fall back to telegram
+        session = origin.delivery_route
+        if not SESSION_RE.fullmatch(session):
+            return []
+        try:
+            profile = self._store.read(session)[0]
+        except RuntimeError:
+            return []
+        if profile["sender_id"] not in self._allowlisted:
+            return []
+        return [{"sender_id": profile["sender_id"], "display_name": profile["display_name"], "chat_id": session}]
 
     def _is_gateway(self, chat_id) -> bool:
         if not str(chat_id).startswith("gateway:"):

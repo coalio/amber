@@ -19,6 +19,8 @@ Current tools:
 
 Tools receive a `ToolRuntime` containing the memory store, adapter registry, global state store, Telegram transport, and Codex workspace path as needed.
 
+The runtime also injects the task-dispatch workflow, delivery policy, and immutable invocation facts. `CodexRunTask` delegates sequencing to the workflow. Tools must not interpret ingress-specific route keys or let model-authored context override trusted task origin.
+
 ## Common Changes
 
 - Add a new tool by implementing `BaseTool`, adding tests, and registering it in `default_tool_registry()`.

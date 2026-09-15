@@ -115,7 +115,11 @@ def build_application(
         status_names=settings.linear_issue_status_targets,
     )
     adapter_registry.register(linear_adapter)
-    gateway_store = GatewayStore(settings.runtime_state_path.parent / "gateway", settings.always_surface_telegram_ids)
+    gateway_store = GatewayStore(
+        settings.runtime_state_path.parent / "gateway", settings.always_surface_telegram_ids,
+        {profile.sender_id: profile.display_name
+         for profile in memory_store.list_allowlisted_profiles(settings.always_surface_telegram_ids)},
+    )
     codex_receiver = CodexReceiver(
         codex_adapter, memory_store, settings.always_surface_telegram_ids,
         candidate_resolver=gateway_store.candidates,

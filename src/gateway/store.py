@@ -15,9 +15,10 @@ SESSION_RE = re.compile(r"gateway:[a-f0-9]{32}")
 
 
 class GatewayStore:
-    def __init__(self, directory: Path, allowlisted_sender_ids) -> None:
+    def __init__(self, directory: Path, allowlisted_sender_ids, sender_names: dict[str, str] | None = None) -> None:
         self.directory = directory
         self.allowlisted_sender_ids = {str(item).removeprefix("user") for item in allowlisted_sender_ids}
+        self.sender_names = sender_names or {}
         self._lock = RLock()
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.directory.chmod(0o700)
@@ -31,7 +32,7 @@ class GatewayStore:
         if sender_id not in self.allowlisted_sender_ids:
             raise RuntimeError("--as must identify an allowlisted Telegram administrator.")
         session = f"gateway:{uuid4().hex}"
-        self.record(session, "created", sender_id=sender_id)
+        self.record(session, "created", sender_id=sender_id, display_name=self.sender_names.get(sender_id, "admin"))
         return session
 
     def read(self, session: str) -> list[dict]:
@@ -63,7 +64,7 @@ class GatewayStore:
         sender = self.sender(session)
         if sender not in self.allowlisted_sender_ids:
             return []
-        return [{"sender_id": sender, "display_name": "admin", "chat_id": session}]
+        return [{"sender_id": sender, "display_name": self.read(session)[0]["display_name"], "chat_id": session}]
 
     def register(self, adapter) -> None:
         for name in ("ContextFrameReadyEvent", "SemanticDecisionMadeEvent", "OutboundMessageSentEvent"):

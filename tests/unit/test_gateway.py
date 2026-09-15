@@ -43,7 +43,7 @@ def reset_runtime():
 
 
 def test_gateway_runs_burst_and_typing_through_real_pipeline(tmp_path):
-    store = GatewayStore(tmp_path / "captures", ["1001001001"])
+    store = GatewayStore(tmp_path / "captures", ["1001001001"], {"1001001001": "Fixture Admin"})
     delegate = RecordingTransport()
     transport = GatewayTransport(delegate, store)
     archive = MessageArchive.instance()
@@ -92,6 +92,7 @@ def test_gateway_runs_burst_and_typing_through_real_pipeline(tmp_path):
 
     rows = asyncio.run(scenario())
     assert len(frames) == 1
+    assert frames[0].current_message.sender_name == "Fixture Admin"
     assert len(frames[0].visible_surfaced_message_ids) == 2
     assert [item["message"] for item in rows if item["event"] == "reply"] == ["received both"]
     assert delegate.records == []

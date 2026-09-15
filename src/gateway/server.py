@@ -94,7 +94,7 @@ class GatewayServer:
     async def _deliver(self, session, sender_id, messages, interval, typing_seconds, reply_to) -> None:
         deliveries = []
         try:
-            sender = TelegramSenderPayload(id=sender_id, name="admin")
+            sender = TelegramSenderPayload(id=sender_id, name=self.store.read(session)[0]["display_name"])
             for index, text in enumerate(messages):
                 if index:
                     # real typing updates and message gaps exercise the same debounce gate
